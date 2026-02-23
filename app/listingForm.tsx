@@ -121,8 +121,8 @@ const ListingForm = () => {
   }
 
   return (
-    <section className="flex  w-[60%] rounded-2xl items-center justify-center p-20">
-            <Card  className="bg-neutral-700/70 border-0 w-full ">
+    <section className="flex   w-full max-w-300 px-[10%] py-20 rounded-2xl items-center justify-center ">
+            <Card  className="bg-neutral-700/70 border-0 w-full  ">
               
           <CardHeader className="border-b-neutral-400 border-b">
             <CardTitle className=" text-white">Less Sting Form App</CardTitle>
@@ -147,7 +147,7 @@ const ListingForm = () => {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="bg-neutral-200">
-                            {["M", "V", "G", "S", "T"].map(e => (
+                            {["M", "V", "G", "GS", "S", "R"].map(e => (
                               <SelectItem key={e} value={e}>{e}</SelectItem>
                             ))}
                           </SelectContent>
