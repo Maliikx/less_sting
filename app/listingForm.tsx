@@ -147,7 +147,7 @@ const ListingForm = () => {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="bg-neutral-200">
-                            {["M", "V", "G", "GS", "S", "R"].map(e => (
+                            {["M", "Ms", "V", "G", "GS", "S", "R"].map(e => (
                               <SelectItem key={e} value={e}>{e}</SelectItem>
                             ))}
                           </SelectContent>
