@@ -1,15 +1,18 @@
 import { google } from "googleapis"
 import { NextResponse } from "next/server"
 
+export const runtime = "nodejs"
+
 type Offer = {
   title: string
   link: string
   price: string
+  note?: string
 }
 
 const auth = new google.auth.JWT({
   email: process.env.GOOGLE_CLIENT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
+  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 })
 
@@ -27,56 +30,61 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 })
     }
 
-    /* ---------- 1. READ EXISTING TITLES ---------- */
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "D2:D", // TITLE column
+      range: "D2:D", 
     })
 
     const existingTitles = new Set(
-      (existing.data.values || []).map(row =>
-        normalize(String(row[0] || ""))
-      )
+      (existing.data.values || []).map(row => normalize(String(row[0] || "")))
     )
 
-    /* ---------- 2. CHECK DUPLICATES ---------- */
-    const duplicates = offers.filter(offer =>
-      existingTitles.has(normalize(offer.title))
-    )
+    const seenInBatch = new Set<string>()
+    const validOffers: Offer[] = []
+    const duplicateTitles: string[] = []
 
-    if (duplicates.length > 0) {
-      return NextResponse.json(
-        {
-          error: "Duplicate titles detected",
-          duplicates: duplicates.map(o => o.title),
-        },
-        { status: 409 }
-      )
+    for (const offer of offers) {
+      const normalizedTitle = normalize(offer.title)
+      // Check if title exists in sheet OR is repeated in the current form
+      if (existingTitles.has(normalizedTitle) || seenInBatch.has(normalizedTitle)) {
+        duplicateTitles.push(normalizedTitle) 
+      } else {
+        seenInBatch.add(normalizedTitle)
+        validOffers.push(offer)
+      }
     }
 
-    /* ---------- 3. INSERT ---------- */
-    const now = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Africa/Cairo" })
-    ).toISOString()
+    if (validOffers.length > 0) {
+      const now = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Africa/Cairo" })
+      ).toISOString()
 
-    const rows = offers.map(offer => [
-      offer.link.trim(),
-      offer.price.trim(),
-      employee,
-      offer.title.trim(),
-      now,
-    ])
+      const rows = validOffers.map(offer => [
+        offer.link.trim(),
+        offer.price.trim(),
+        employee,
+        offer.title.trim(),
+        offer.note?.trim() || "",
+        now,
+      ])
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "A:E",
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values: rows },
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: "A:F",
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: rows },
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      addedCount: validOffers.length,
+      skippedCount: duplicateTitles.length,
+      duplicates: duplicateTitles, // Returning normalized titles
     })
 
-    return NextResponse.json({ success: true })
   } catch (err) {
-    console.error("POST /api/offers error:", err)
+    console.error("POST error:", err)
     return NextResponse.json({ error: "Server error" }, { status: 500 })
   }
 }

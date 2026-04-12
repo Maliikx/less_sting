@@ -35,7 +35,7 @@ export async function GET(req: Request) {
     /* ---------- 2. READ SHEET DATA ---------- */
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "A2:E", // LINK | PRICE | EMPLOYEE | TITLE | CREATED_AT
+      range: "A2:F", // LINK | PRICE | EMPLOYEE | TITLE | CREATED_AT
     })
   
     const rows = res.data.values || []
@@ -45,7 +45,7 @@ export async function GET(req: Request) {
   
     for (const row of rows) {
       const rowEmployee = row[2]        // EMPLOYEE column
-      const createdAt = row[4]          // CREATED_AT column
+      const createdAt = row[5]          // CREATED_AT column
   
       if (!rowEmployee || !createdAt) continue
   

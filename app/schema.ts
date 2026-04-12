@@ -4,6 +4,8 @@ export const offerSchema = z.object({
   title: z.string().min(3, "Title is required"),
   link: z.string().url("Invalid URL"),
   price: z.string().min(1, "Price is required"),
+  note: z.string().optional(), 
+
 })
 
 export const formSchema = z.object({
