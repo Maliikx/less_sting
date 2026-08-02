@@ -9,7 +9,7 @@ import {
 
 import { useForm, useFieldArray } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -27,42 +27,54 @@ import { Textarea } from "@/components/ui/textarea"
 // Helper to match backend normalization exactly
 const normalize = (val: string) => val.trim().toLowerCase().replace(/\s+/g, " ");
 
+const emptyOffer = () => ({ title: "", link: "", price: "", note: "" })
+
 const ListingForm = () => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null)
-  
+  const [submitWarning, setSubmitWarning] = useState<string | null>(null)
+
   // Initialized to 0 to prevent "NaN"
   const [dailyCount, setDailyCount] = useState<number>(0)
   const [loadingCount, setLoadingCount] = useState(false)
   const [duplicateTitles, setDuplicateTitles] = useState<Record<number, boolean>>({})
+
+  // Bulk price input at the top of the form
+  const [bulkPrice, setBulkPrice] = useState("")
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     mode: "onChange",
     defaultValues: {
       employee: "",
-      offers: [{ title: "", link: "", price: "", note: "" }],
+      offers: [emptyOffer()],
     },
   })
 
-  const { control, handleSubmit, watch, reset } = form
+  const { control, handleSubmit, watch, reset, setValue, getValues } = form
   const selectedEmployee = watch("employee")
   const { fields, append, remove } = useFieldArray({ control, name: "offers" })
 
-  /* ------------------ DAILY COUNT ------------------ */
+  /* ------------------ DAILY COUNT (always re-read from the sheet) ------------------ */
+  const fetchDailyCount = useCallback(async (employee: string) => {
+    if (!employee) return
+    setLoadingCount(true)
+    try {
+      const res = await fetch(`/api/offers/count?employee=${encodeURIComponent(employee)}`)
+      const data = await res.json()
+      setDailyCount(Number(data.count) || 0)
+    } catch {
+      setDailyCount(0)
+    } finally {
+      setLoadingCount(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!selectedEmployee) return
-    setLoadingCount(true)
-    fetch(`/api/offers/count?employee=${selectedEmployee}`)
-      .then(res => res.json())
-      .then(data => {
-        // Ensure we parse as number to avoid NaN
-        setDailyCount(Number(data.count) || 0)
-      })
-      .catch(() => setDailyCount(0))
-      .finally(() => setLoadingCount(false))
-  }, [selectedEmployee])
+    fetchDailyCount(selectedEmployee)
+  }, [selectedEmployee, fetchDailyCount])
 
   /* ------------------ LIVE DUPLICATE UI CHECK ------------------ */
   const watchedOffers = watch("offers")
@@ -83,7 +95,7 @@ const ListingForm = () => {
         const data = await res.json()
         const map: Record<number, boolean> = {}
         watchedOffers.forEach((offer, i) => {
-          map[i] = data.duplicates.includes(normalize(offer.title))
+          map[i] = (data.duplicates || []).includes(normalize(offer.title))
         })
         setDuplicateTitles(map)
       } catch (e) { console.error("Check failed", e) }
@@ -92,12 +104,32 @@ const ListingForm = () => {
     return () => clearTimeout(timeout)
   }, [watchedOffers])
 
+  /* ------------------ BULK ACTIONS ------------------ */
+  const addTenOffers = () => {
+    const newOffers = Array.from({ length: 10 }, () => ({
+      title: "",
+      link: "",
+      price: bulkPrice.trim(),
+      note: "",
+    }))
+    append(newOffers)
+  }
+
+  const applyPriceToAll = () => {
+    const price = bulkPrice.trim()
+    if (!price) return
+    fields.forEach((_, i) => {
+      setValue(`offers.${i}.price`, price, { shouldValidate: true, shouldDirty: true })
+    })
+  }
+
   /* ------------------ SUBMIT ------------------ */
   const onSubmit = async (values: FormValues) => {
     try {
       setIsSubmitting(true)
       setSubmitError(null)
       setSubmitSuccess(null)
+      setSubmitWarning(null)
 
       const res = await fetch("/api/offers", {
         method: "POST",
@@ -113,35 +145,43 @@ const ListingForm = () => {
         return
       }
 
-      // 1. Success Message (Handling potentially undefined counts)
       const added = data.addedCount ?? 0;
       const skipped = data.skippedCount ?? 0;
-      
-      setSubmitSuccess(`✅ ${added} submitted, ${skipped} skipped`)
 
-      // 2. Update Daily Count
-      setDailyCount(prev => prev + added)
+      // Make it obvious when nothing actually got added, instead of a
+      // green "success" message that hides an all-duplicates result.
+      if (added === 0 && skipped > 0) {
+        setSubmitWarning(`⚠️ 0 submitted - all ${skipped} title(s) already exist on the sheet.`)
+      } else if (skipped > 0) {
+        setSubmitSuccess(`✅ ${added} submitted, ${skipped} skipped (already existed)`)
+      } else {
+        setSubmitSuccess(`✅ ${added} submitted`)
+      }
 
-      // 3. Keep Duplicates in Form and Highlight Red
+      // Re-read the true count from the sheet instead of guessing locally -
+      // this is what was making the counter drift.
+      await fetchDailyCount(values.employee)
+
+      // Keep Duplicates in Form and Highlight Red
       const serverDuplicates = data.duplicates || []
-      
+
       // Filter the original submitted values to find which ones the server rejected
-      const remainingInForm = values.offers.filter(offer => 
+      const remainingInForm = values.offers.filter(offer =>
         serverDuplicates.includes(normalize(offer.title))
       )
 
       // Reset the form with the duplicates (or a fresh field if empty)
       reset({
         employee: values.employee,
-        offers: remainingInForm.length > 0 
-          ? remainingInForm 
-          : [{ title: "", link: "", price: "", note: "" }],
+        offers: remainingInForm.length > 0
+          ? remainingInForm
+          : [emptyOffer()],
       })
 
       // Update the red highlight map for the remaining items
       const newDuplicateMap: Record<number, boolean> = {}
       remainingInForm.forEach((_, i) => {
-        newDuplicateMap[i] = true 
+        newDuplicateMap[i] = true
       })
       setDuplicateTitles(newDuplicateMap)
 
@@ -162,7 +202,7 @@ const ListingForm = () => {
         <CardContent>
           <Form {...form}>
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6 w-full">
-              
+
               <FormField
                 control={control}
                 name="employee"
@@ -194,9 +234,37 @@ const ListingForm = () => {
                     {loadingCount ? "Checking today's submissions..." : `Offers submitted today: ${dailyCount}`}
                   </p>
 
+                  {/* Bulk controls */}
+                  <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-end border border-neutral-600 bg-neutral-800/60 p-3 rounded-lg">
+                    <div className="flex-1">
+                      <label className="text-sm text-neutral-300 block mb-1">Price for all offers</label>
+                      <Input
+                        className="border-neutral-600 bg-neutral-200 text-neutral-900"
+                        placeholder="e.g. 100"
+                        value={bulkPrice}
+                        onChange={(e) => setBulkPrice(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={applyPriceToAll}
+                      disabled={!bulkPrice.trim()}
+                    >
+                      Apply price to all
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={addTenOffers}
+                    >
+                      ➕ Add 10 offers
+                    </Button>
+                  </div>
+
                   {fields.map((field, index) => (
                     <div key={field.id} className="border text-white border-neutral-500 bg-neutral-900 p-4 rounded-lg space-y-3 relative">
-                      
+
                       {duplicateTitles[index] && (
                         <div className="absolute top-2 right-4 text-xs font-bold text-red-400 animate-pulse">
                           ⚠️ DUPLICATE
@@ -210,10 +278,10 @@ const ListingForm = () => {
                           <FormItem>
                             <FormLabel className={duplicateTitles[index] ? "text-red-400" : ""}>Title</FormLabel>
                             <FormControl>
-                              <Input 
-                                className={`border-neutral-600 ${duplicateTitles[index] ? "border-red-500 bg-red-950/20 focus-visible:ring-red-500" : ""}`} 
-                                {...field} 
-                                placeholder="Offer title" 
+                              <Input
+                                className={`border-neutral-600 ${duplicateTitles[index] ? "border-red-500 bg-red-950/20 focus-visible:ring-red-500" : ""}`}
+                                {...field}
+                                placeholder="Offer title"
                               />
                             </FormControl>
                             <FormMessage />
@@ -262,7 +330,7 @@ const ListingForm = () => {
                           )}
                         />
 
-                        
+
 
                       <FormField
                           control={control}
@@ -289,13 +357,14 @@ const ListingForm = () => {
                   <Button
                     className="w-full border-dashed border-2 border-neutral-500 bg-transparent hover:bg-neutral-800"
                     type="button"
-                    onClick={() => append({ title: "", link: "", price: "", note: "" })}
+                    onClick={() => append({ ...emptyOffer(), price: bulkPrice.trim() })}
                   >
                     ➕ Add another offer
                   </Button>
 
                   <div className="pt-4 border-t border-neutral-600">
                     {submitError && <p className="text-red-400 bg-red-950/30 p-2 rounded mb-3 text-center text-sm font-medium">{submitError}</p>}
+                    {submitWarning && <p className="text-yellow-400 bg-yellow-950/30 p-2 rounded mb-3 text-center text-sm font-medium">{submitWarning}</p>}
                     {submitSuccess && <p className="text-green-400 bg-green-950/30 p-2 rounded mb-3 text-center text-sm font-medium">{submitSuccess}</p>}
 
                     <Button
