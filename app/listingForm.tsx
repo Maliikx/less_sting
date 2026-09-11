@@ -271,7 +271,23 @@ const ListingForm = () => {
                         </div>
                       )}
 
+                      
+
                       <FormField
+                        control={control}
+                        name={`offers.${index}.link`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Link</FormLabel>
+                            <FormControl>
+                              <Input className="border-neutral-600" {...field} placeholder="https://..." />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+<FormField
                         control={control}
                         name={`offers.${index}.title`}
                         render={({ field }) => (
@@ -287,16 +303,18 @@ const ListingForm = () => {
                             <FormMessage />
                           </FormItem>
                         )}
-                      />
-
-                      <FormField
+                      /><FormField
                         control={control}
-                        name={`offers.${index}.link`}
+                        name={`offers.${index}.title`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Link</FormLabel>
+                            <FormLabel className={duplicateTitles[index] ? "text-red-400" : ""}>Title</FormLabel>
                             <FormControl>
-                              <Input className="border-neutral-600" {...field} placeholder="https://..." />
+                              <Input
+                                className={`border-neutral-600 ${duplicateTitles[index] ? "border-red-500 bg-red-950/20 focus-visible:ring-red-500" : ""}`}
+                                {...field}
+                                placeholder="Offer title"
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
