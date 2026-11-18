@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import GameBoostPanel from "./gameboostPanel"
 import AccountDataFields from "./accountDataFields"
 import NavBar from "./navBar"
+import { EMPLOYEES } from "@/lib/employees"
 import { applyWordFilter, fixTitle, isMultiplier, parseFilterWords, resolvePrice } from "@/lib/offerRules"
 
 // Helper to match backend normalization exactly
@@ -383,7 +384,7 @@ const ListingForm = () => {
     }
   }
 
-  const employees = useMemo(() => ["M", "Ms", "V", "G", "GS", "S", "R", "I1", "I2"], [])
+  const employees = EMPLOYEES
 
   return (
     <section className="flex w-full max-w-300 px-[10%] py-20 rounded-2xl items-center justify-center ">

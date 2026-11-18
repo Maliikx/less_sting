@@ -9,16 +9,15 @@ export const runtime = "nodejs"
 export const maxDuration = 60
 
 /**
- * POST /api/auto/publish  { items: PublishItem[] (max 20), settings: { deliveryDuration, deliveryUnit, defaultDescription? } }
+ * POST /api/auto/publish
+ *   { items: PublishItem[] (max 20), settings: { listNow, deliveryDuration, deliveryUnit, defaultDescription?, deliveryInstructions? } }
  *   -> { results: PublishResult[], listNow }
- * Called only when the user presses "Publish selected" on /auto. Runs the existing POST /api/offers code
- * in-process (duplicate-title check, 422 retry, sheet logging). Offers are created as DRAFTS unless
- * AUTO_LIST_NOW=1 is set (testing phase, user decision).
+ * Called only when the user presses Publish on /auto (after a confirmation). Runs the existing POST /api/offers code
+ * in-process (duplicate-title check, 422 retry, sheet logging). listNow false (the default) = create as drafts.
  */
 export async function POST(req: Request) {
   if (!(await isAuthed(req))) return NextResponse.json({ error: "Not logged in" }, { status: 401 })
-  const listNow = process.env.AUTO_LIST_NOW === "1"
-  const input = parsePublishRequest(await req.json().catch(() => null), listNow)
+  const input = parsePublishRequest(await req.json().catch(() => null))
   if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 })
 
   const dest = gameboostDestination(async body => {
@@ -27,5 +26,5 @@ export async function POST(req: Request) {
   })
   const results = await dest.publish(input.items, input.settings)
   console.log(`auto publish: ${results.map(r => `${r.ref}=${r.status}${r.offerId ? `#${r.offerId}` : ""}`).join(" ")}`)
-  return NextResponse.json({ results, listNow })
+  return NextResponse.json({ results, listNow: input.settings.listNow })
 }

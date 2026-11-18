@@ -65,15 +65,19 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
 ## Batch listing UI (plan step 4, decided with the user)
-- Employees list 10-20 offers at a time. Input is ONE paste box, one line per offer: `link price seller` (price = number or multiplier).
-  Those three are the only manual fields.
+- Employees list 10-20 offers at a time. `/auto` looks like the `/` form but each row has ONLY 3 fields: offer link, price
+  (number or multiplier), seller code (same list as `/`, `lib/employees.ts`). Plus: seller for all, price for all, +10 rows,
+  "paste many links". Settings (remembered per browser): delivery time + unit, default description, delivery instructions,
+  and "Create as draft" / "List immediately".
 - One compact table to review (status, cleaned title, price, images, game; badges for defaulted fields / removed text), details expand
-  on click, "Publish selected" for all ready rows. Lightweight, not a form per offer. The existing `/` form stays as it is.
+  on click. Buttons act on ticked rows and show counts: Publish (ready rows), List now (drafts), Back to draft (listed), Delete
+  (created offers; confirmation; uses the existing DELETE route that refuses sold/ordered offers and marks the sheet row `deleted`).
+  Selection rules are pure + tested in `lib/auto/rows.ts`. The existing `/` form stays as it is.
 - BUILT (step 4): `/auto` page, `lib/auto/*` (lines parser, prepareBatch = one page at a time 1.5 s apart, game resolution, review
   re-check), `POST /api/auto/publish` -> `lib/destinations` (DestinationAdapter; GameBoost adapter calls the EXISTING
   `POST /api/offers` handler in-process, one request per seller+game). Server re-checks images + banned words before publishing.
-- TESTING PHASE: offers are created as DRAFTS (`AUTO_LIST_NOW` unset). Set `AUTO_LIST_NOW=1` only when the user says to list for real.
-  The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
+- TESTING PHASE: the page defaults to "Create as draft"; the user can switch to "List immediately" (server only lists on a literal
+  `listNow: true`). The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
   `GOOGLE_SHEET_ID`) so test publishes don't land in the real Sheet1.
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.

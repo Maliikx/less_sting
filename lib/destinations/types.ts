@@ -32,6 +32,8 @@ export type PublishSettings = {
   deliveryUnit: "minutes" | "hours" | "days"
   /** Used for offers with an empty description. */
   defaultDescription?: string
+  /** Shown to the buyer after purchase (NOT encrypted: never credentials). */
+  deliveryInstructions?: string
 }
 
 export type PublishResult = {

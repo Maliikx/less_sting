@@ -220,12 +220,19 @@ test("destination: answers map back per row: created, duplicate, failed (with mi
 
 /* ------------------------------------------------------------ publish request (server-side gate) */
 
-test("publish request: server re-checks images and banned words; listNow comes from the server only", () => {
-  const ok = parsePublishRequest({ items: [{ ...ITEM(), listNow: true }], settings: { deliveryDuration: 1, deliveryUnit: "hours" } }, false)
+test("publish request: server re-checks images and banned words; draft unless the user chose List immediately", () => {
+  const SET = { deliveryDuration: 1, deliveryUnit: "hours" }
+  const ok = parsePublishRequest({ items: [ITEM()], settings: SET })
   assert.ok(!("error" in ok))
-  assert.equal(ok.settings.listNow, false)
-  const err = (items: unknown[], settings: unknown = { deliveryDuration: 1, deliveryUnit: "hours" }) => {
-    const r = parsePublishRequest({ items, settings }, false)
+  assert.equal(ok.settings.listNow, false, "default = draft")
+  const listed = parsePublishRequest({ items: [ITEM()], settings: { ...SET, listNow: true, deliveryInstructions: "  Add me on Discord after purchase  " } })
+  assert.ok(!("error" in listed))
+  assert.equal(listed.settings.listNow, true)
+  assert.equal(listed.settings.deliveryInstructions, "Add me on Discord after purchase")
+  const truthy = parsePublishRequest({ items: [ITEM()], settings: { ...SET, listNow: "yes" } })
+  assert.ok(!("error" in truthy) && truthy.settings.listNow === false, "only literal true lists")
+  const err = (items: unknown[], settings: unknown = SET) => {
+    const r = parsePublishRequest({ items, settings })
     return "error" in r ? r.error : ""
   }
   assert.match(err([ITEM({ images: ["https://i.imgur.com/a.jpg"] })]), /imgur/)
@@ -235,6 +242,7 @@ test("publish request: server re-checks images and banned words; listNow comes f
   assert.match(err([ITEM(), ITEM()]), /repeated/)
   assert.match(err(Array.from({ length: 21 }, (_, i) => ITEM({ ref: `r${i}` }))), /At most 20/)
   assert.match(err([ITEM()], { deliveryDuration: 0, deliveryUnit: "hours" }), /whole number/)
+  assert.match(err([ITEM()], { ...SET, deliveryInstructions: "x".repeat(2049) }), /2048/)
   assert.match(err([]), /No offers/)
 })
 

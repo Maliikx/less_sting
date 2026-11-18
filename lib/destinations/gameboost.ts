@@ -49,6 +49,7 @@ export function buildOffersRequests(items: PublishItem[], s: PublishSettings) {
         deliveryDuration: String(s.deliveryDuration),
         deliveryUnit: s.deliveryUnit,
         description: s.defaultDescription || "",
+        deliveryInstructions: s.deliveryInstructions || "",
         accountData: "{}",
         requiredFields: "",
         fieldTypes: "{}",

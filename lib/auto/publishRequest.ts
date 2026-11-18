@@ -8,9 +8,9 @@ const UNITS = ["minutes", "hours", "days"] as const
 /**
  * Validate POST /api/auto/publish on the SERVER (the browser's checks are only a convenience):
  * shapes, sizes, at least one usable image, and no banned words left (server knows BLOCKLIST_EXTRA).
- * `listNow` comes from the server (AUTO_LIST_NOW), never from the browser.
+ * `settings.listNow` = the user's "List immediately" choice; anything but `true` creates drafts.
  */
-export function parsePublishRequest(body: unknown, listNow: boolean): { error: string } | { items: PublishItem[]; settings: PublishSettings } {
+export function parsePublishRequest(body: unknown): { error: string } | { items: PublishItem[]; settings: PublishSettings } {
   const b = (body || {}) as { items?: unknown; settings?: Record<string, unknown> }
   if (!Array.isArray(b.items) || !b.items.length) return { error: "No offers selected" }
   if (b.items.length > PUBLISH_MAX_ITEMS) return { error: `At most ${PUBLISH_MAX_ITEMS} offers per publish` }
@@ -20,8 +20,11 @@ export function parsePublishRequest(body: unknown, listNow: boolean): { error: s
   const unit = String(s.deliveryUnit || "")
   if (!Number.isInteger(duration) || duration <= 0) return { error: "Delivery time must be a whole number" }
   if (!(UNITS as readonly string[]).includes(unit)) return { error: "Delivery unit must be minutes, hours or days" }
+  const instructions = typeof s.deliveryInstructions === "string" ? s.deliveryInstructions.trim() : ""
+  if (instructions.length > 2048) return { error: "Delivery instructions: max 2048 characters" }
   const settings: PublishSettings = {
-    listNow,
+    listNow: s.listNow === true,
+    deliveryInstructions: instructions || undefined,
     deliveryDuration: duration,
     deliveryUnit: unit as PublishSettings["deliveryUnit"],
     defaultDescription: typeof s.defaultDescription === "string" ? s.defaultDescription.slice(0, 2000) : undefined,
