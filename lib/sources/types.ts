@@ -21,18 +21,31 @@ export type SourceOffer = {
   description?: string
   /** All other label/value pairs on the page (Server, Rank, ...). Cheap, reliable input for game fields. */
   params: Record<string, string>
+  /** FunPay category name from the page's back link, e.g. "PUBG Mobile Accounts". */
   category?: string
+  /** FunPay category id (the number in /lots/<id>/). Stable key for game mapping (plan step 7). */
+  categoryId?: string
+  /** Game guessed from the category name ("PUBG Mobile"). */
   game?: string
 
+  /** Full-size images uploaded to the offer page. */
   images: string[]
+  /** Screenshot albums / videos the description links to (imgur, postimg, YouTube...). Shown to the employee, never fetched. */
+  externalMedia?: string[]
   /** Price exactly as on the page, no currency conversion (project rule). */
   price?: number
   priceText?: string
   currency?: string
+  /** The seller's own price before FunPay's payment fee (data-factors), same currency. Information only for now. */
+  sellerPrice?: number
+  /** Every payment option on the page (method, currency, buyer price). For review/debugging. */
+  priceOptions?: PriceOption[]
 
   /** What the parser could and could not find. Shown in the review screen and the probe report. */
   warnings: string[]
 }
+
+export type PriceOption = { method: string; currency: string; price: number; priceText: string; sellerPrice?: number }
 
 export type FetchedPage = { status: number; html: string; finalUrl: URL }
 

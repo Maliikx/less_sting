@@ -194,7 +194,7 @@ test("pipeline: dead and blocked offers cost no AI and are reported differently"
 
 test("pipeline: multiplier without a readable source price is an error, not a guess", async () => {
   const r = await prepareOffer({ link: "https://funpay.com/en/lots/offer?id=71122224", price: "x2", seller: "M" }, {
-    readOffer: readOffer(EN_OFFER.replace(/<div class="payment-value">[\s\S]*?<\/div>\s*<div class="tc-price"[\s\S]*?<\/div>/, "")),
+    readOffer: readOffer(EN_OFFER.replace(/<select[\s\S]*?<\/select>/, "")),
     ai: null,
     game: null,
   })

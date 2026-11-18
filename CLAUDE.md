@@ -43,14 +43,26 @@ lib/pipeline/prepare.ts, app/api/ai/prepare/route.ts, scripts/probe-funpay.ts, t
 Existing app (do not break): `/` offers form, `/manage` (dead-link check), `POST /api/offers` (creates on GameBoost, 422 retry, sheet logging,
 duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` routes except `/api/login` and `/api/gameboost/sync`.
 
-## Known facts from the first local probe (21 unique links, 2026-11-18, cloud IP, `/en/` links)
-- 15 ok / 6 not_found (HTTP 404) / 0 blocked. Title, description, price, params read on 15/15; images on 10/15 (not yet checked if real misses).
-- Parser problems seen: purchase-form labels ("In stock", "Your account will be charged for", "Remaining price", "Seller's rating") are read
-  as params; `category` is empty on every page; price text is "from 180.64 $" (USD on `/en/` from that IP).
-- `scripts/probe-funpay.ts` does not run as-is (top-level await compiled as CJS by tsx). Node's fetch needs `NODE_USE_ENV_PROXY=1` behind a proxy.
+## FunPay facts (checked against real pages, plan steps 1-2; samples in tests/fixtures/real)
+- FunPay does NOT block Vercel: preview probe of 22 links = 16 ok / 6 not_found / 0 blocked.
+- `/en/` pages show FunPay's own English translation of Russian offers, so the AI translation step is rarely needed.
+- Category + id come from the page's back link (`/lots/<id>/`, e.g. 346 = PUBG Mobile Accounts); game = category minus "Accounts".
+- Images: full-size = the `href` of `a.attachments-thumb` (the background-image is a thumbnail). About 1 in 3 offers has no gallery and
+  links an album/video in the description instead (postimg, imgur, YouTube): reported in `externalMedia`, never fetched.
+- Price: the buy form lists payment options per currency (`data-cy`); which currencies appear depends on the visitor. The parser takes the
+  cheapest buyer price in `SOURCE_PRICE_CURRENCY` (default USD) and never mixes currencies. `data-factors[0]` is the seller's own price
+  (~7% below the buyer price; the round number, e.g. 6600 RUB, is what the seller typed). OPEN QUESTION: buyer price or seller price?
+- Dead offer = HTTP 404 with heading "Offer not found". Only the status/heading counts, never the description text.
+- `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
+
+## Batch listing UI (plan step 4, decided with the user)
+- Employees list 10-20 offers at a time. Input is ONE paste box, one line per offer: `link price seller` (price = number or multiplier).
+  Those three are the only manual fields.
+- One compact table to review (status, cleaned title, price, images, game; badges for defaulted fields / removed text), details expand
+  on click, "Publish selected" for all ready rows. Lightweight, not a form per offer. The existing `/` form stays as it is.
 
 ## NOT verified yet
-1. FunPay parser against real pages (plan step 2), and whether FunPay blocks Vercel IPs (plan step 1, `/probe`).
+1. Behaviour of FunPay over time / at volume (300/day) from Vercel.
 2. AI path only tested against a mock; Groq/Gemini model names and free limits change.
 3. Whether the GameBoost required-field probe finds required fields for real games.
 4. Whether GameBoost PATCH replaces or merges `image_urls`.

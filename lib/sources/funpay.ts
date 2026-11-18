@@ -1,22 +1,32 @@
-import { extractImages, extractPrice, notFoundPhrases, pageText } from "../sourcePage"
-import type { FetchedPage, SourceAdapter, SourceOffer } from "./types"
+import { extractPrice, notFoundPhrases } from "../sourcePage"
+import type { FetchedPage, PriceOption, SourceAdapter, SourceOffer } from "./types"
 
 /**
  * FunPay single-offer page: https://funpay.com/en/lots/offer?id=<number>
  *
- * IMPORTANT: written from FunPay's usual layout (blocks with an <h5> label followed by the value),
- * NOT yet checked against live pages. The parser is label-driven and tolerant on purpose, and every
- * thing it cannot find ends up in `warnings`. Run `npm run probe:funpay -- links.txt` on real links
- * and fix the labels below if the report shows misses.
+ * Checked against real pages (tests/fixtures/real, saved 2026-11-18). Layout:
+ *  - <div class="back-link"><a href=".../lots/<categoryId>/"><span class="inside">PUBG Mobile Accounts</span></a>
+ *  - <div class="param-list"> with <div class="param-item"><h5>Label</h5><div class="text-bold">Value</div></div>
+ *    for the game parameters, then "Short description", "Detailed description" and "Images" param-items
+ *  - Images: <ul class="attachments-list"><a class="attachments-thumb" style="background-image:url(<thumb>)" href="<full size>">
+ *  - Price: buy form <select name="method"> options with data-cy (currency), data-factors (seller price, fee factor)
+ *    and data-content holding <span class="payment-value">180.64 $</span>. The set of currencies depends on the visitor.
+ *  - Dead offer: HTTP 404 with <h1 class="page-header">Offer not found</h1>
+ *  - /en/ pages show FunPay's own English translation of Russian offers.
+ *
+ * The purchase form also has param-items ("Your account will be charged for", "Remaining price"); they are NOT
+ * offer parameters and are outside the param-list, so they are ignored.
  */
 
 const LABELS = {
   short: ["short description", "краткое описание"],
   detailed: ["detailed description", "подробное описание", "полное описание"],
-  category: ["category", "категория"],
-  game: ["game", "игра"],
+  /** param-list items that are not game parameters */
+  notParams: ["images", "картинки", "in stock", "наличие", "seller's rating", "рейтинг продавца"],
 }
 
+/** Hosts sellers use for screenshot albums / videos when they don't upload images to FunPay. Reported, never fetched. */
+const MEDIA_HOSTS = /\b(?:postimg\.cc|postimages\.org|imgur\.com|prnt\.sc|prntscr\.com|gyazo\.com|ibb\.co|imgbb\.com|youtu\.be|youtube\.com|drive\.google\.com|disk\.yandex\.\w+|yadi\.sk|tracker\.gg|r6skins\.locker|lightshot)\b/i
 const decodeEntities = (s: string) =>
   s
     .replace(/&nbsp;|&#160;/g, " ")
@@ -73,26 +83,94 @@ export function extractLabelledBlocks(html: string): Record<string, string> {
   return out
 }
 
-const pick = (blocks: Record<string, string>, names: string[]) => {
-  for (const [k, v] of Object.entries(blocks)) if (names.includes(k.toLowerCase())) return v
-  return undefined
+/** Text between two markers (start inclusive); empty when the start marker is missing. */
+function section(html: string, start: RegExp, end: RegExp) {
+  const s = html.search(start)
+  if (s < 0) return ""
+  const rest = html.slice(s)
+  const e = rest.slice(1).search(end)
+  return e < 0 ? rest : rest.slice(0, e + 1)
 }
 
-function currencyOf(text?: string) {
-  if (!text) return undefined
-  if (/€|\beur\b/i.test(text)) return "EUR"
-  if (/\$|\busd\b/i.test(text)) return "USD"
-  if (/₽|\brub\b|руб/i.test(text)) return "RUB"
-  if (/£|\bgbp\b/i.test(text)) return "GBP"
-  if (/₴|\buah\b/i.test(text)) return "UAH"
-  return undefined
+/** "PUBG Mobile Accounts" -> "PUBG Mobile"; "Аккаунты PUBG Mobile" -> "PUBG Mobile". */
+export function gameFromCategory(category?: string) {
+  if (!category) return undefined
+  const g = category.replace(/\s+(accounts?|account)$/i, "").replace(/^аккаунты\s+/i, "").trim()
+  return g && g !== category ? g : undefined
 }
 
-function metaContent(html: string, prop: string) {
-  const m = html.match(new RegExp(`<meta\\b[^>]*(?:property|name)\\s*=\\s*["']${prop}["'][^>]*>`, "i"))
-  const c = m?.[0].match(/content\s*=\s*["']([^"']*)["']/i)
-  return c ? decodeEntities(c[1]).trim() : undefined
+/** Category name and id from the "back" link at the top of the offer. */
+export function extractCategory(html: string): { category?: string; categoryId?: string } {
+  const m = html.match(/<div class="back-link">\s*<a\b[^>]*href="[^"]*\/lots\/(\d+)\/?"[^>]*>[\s\S]*?<span class="inside">([\s\S]*?)<\/span>/i)
+  if (!m) return {}
+  return { categoryId: m[1], category: htmlToText(m[2]) || undefined }
 }
+
+/** Full-size gallery images (the link target, not the background-image thumbnail). */
+export function extractGallery(html: string, base: URL): string[] {
+  const list = section(html, /<ul class="attachments-list"/i, /<\/ul>/i)
+  const out: string[] = []
+  for (const m of list.matchAll(/<a\b[^>]*class="[^"]*\battachments-thumb\b[^"]*"[^>]*>/gi)) {
+    const href = m[0].match(/\bhref\s*=\s*"([^"]+)"/i)?.[1]
+    if (!href) continue
+    try {
+      const u = new URL(decodeEntities(href), base)
+      if ((u.protocol === "https:" || u.protocol === "http:") && !out.includes(u.href)) out.push(u.href)
+    } catch {
+      /* skip bad link */
+    }
+  }
+  return out
+}
+
+/** Links in the description that point at screenshot albums or videos (shown to the employee; not fetched). */
+export function externalMediaLinks(text?: string): string[] {
+  if (!text) return []
+  const out: string[] = []
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"')]+/gi)) if (MEDIA_HOSTS.test(m[0]) && !out.includes(m[0])) out.push(m[0])
+  return out
+}
+
+/** Every payment option of the buy form: currency, price the buyer pays, and the seller's own price (data-factors[0]). */
+export function extractPriceOptions(html: string): PriceOption[] {
+  const out: PriceOption[] = []
+  for (const m of html.matchAll(/<option\b([^>]*)>/gi)) {
+    const a = m[1]
+    const cy = a.match(/\bdata-cy="(\w+)"/i)?.[1]
+    const content = a.match(/\bdata-content="([^"]*)"/i)?.[1]
+    if (!cy || !content) continue
+    const inner = decodeEntities(decodeEntities(content))
+    const pv = inner.match(/class="payment-value">([^<]*)</i)?.[1]?.replace(/\s+/g, " ").trim()
+    const title = inner.match(/class="payment-title">([^<]*)</i)?.[1]?.trim()
+    const amount = pv ? Number(pv.replace(/[^\d.,]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", ".")) : NaN
+    if (!Number.isFinite(amount) || amount <= 0) continue
+    const factors = a.match(/\bdata-factors="([^"]*)"/i)?.[1]?.split(",").map(Number) ?? []
+    out.push({
+      method: title || a.match(/\bvalue="(\d+)"/)?.[1] || "?",
+      currency: cy.toUpperCase(),
+      price: Math.round(amount * 100) / 100,
+      priceText: pv!,
+      sellerPrice: Number.isFinite(factors[0]) && factors[0] > 0 ? Math.round(factors[0] * 100) / 100 : undefined,
+    })
+  }
+  return out
+}
+
+/**
+ * One price, never mixing currencies: the cheapest buyer price in the preferred currency
+ * (SOURCE_PRICE_CURRENCY, default USD); if the page doesn't offer it, the first currency listed, with a warning.
+ */
+export function pickPrice(options: PriceOption[], preferred = "USD"): { chosen?: PriceOption; currencies: string[]; usedFallback: boolean } {
+  const currencies = [...new Set(options.map(o => o.currency))]
+  if (!options.length) return { currencies, usedFallback: false }
+  const want = preferred.toUpperCase()
+  const cur = currencies.includes(want) ? want : currencies[0]
+  const chosen = options.filter(o => o.currency === cur).sort((a, b) => a.price - b.price)[0]
+  return { chosen, currencies, usedFallback: cur !== want }
+}
+
+const SYMBOL_CURRENCY: [RegExp, string][] = [[/€|\beur\b/i, "EUR"], [/\$|\busd\b/i, "USD"], [/₽|\brub\b|руб/i, "RUB"]]
+const currencyOfText = (t?: string) => SYMBOL_CURRENCY.find(([re]) => t && re.test(t))?.[1]
 
 export const funpay: SourceAdapter = {
   id: "funpay",
@@ -113,20 +191,13 @@ export const funpay: SourceAdapter = {
   },
 
   parse({ status, html, finalUrl }: FetchedPage): SourceOffer {
-    const id = this.canonicalId(finalUrl) || this.canonicalId(new URL(finalUrl.href)) || `funpay:${finalUrl.searchParams.get("id") ?? "?"}`
-    const base: SourceOffer = {
-      source: "funpay",
-      canonicalId: id,
-      url: finalUrl.href,
-      status: "ok",
-      httpStatus: status,
-      params: {},
-      images: [],
-      warnings: [],
-    }
+    const id = this.canonicalId(finalUrl) || `funpay:${finalUrl.searchParams.get("id") ?? "?"}`
+    const base: SourceOffer = { source: "funpay", canonicalId: id, url: finalUrl.href, status: "ok", httpStatus: status, params: {}, images: [], warnings: [] }
 
-    const text = pageText(html)
-    if (status === 404 || status === 410 || notFoundPhrases().some(p => text.includes(p))) {
+    // Dead: HTTP 404/410, or the page heading says so. Never the whole page text: a live offer's
+    // description could contain "offer not found" and must not be reported as dead.
+    const h1 = htmlToText(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").toLowerCase()
+    if (status === 404 || status === 410 || (h1 && notFoundPhrases().some(p => h1.includes(p)))) {
       return { ...base, status: "not_found", message: "Offer not found at this link" }
     }
     if (status === 403 || status === 429 || status === 503 || /just a moment|cf-chl|captcha/i.test(html.slice(0, 20000))) {
@@ -134,31 +205,47 @@ export const funpay: SourceAdapter = {
     }
     if (status >= 400) return { ...base, status: "error", message: `The page returned HTTP ${status}` }
 
-    const blocks = extractLabelledBlocks(html)
+    const paramList = section(html, /<div class="param-list"/i, /<div class="chat-float-container"|<form\b|<div class="js-order-prices/i)
+    if (!paramList) {
+      // Unknown layout (maintenance page, login wall, redesign): unknown, never dead.
+      return { ...base, status: "error", message: "Offer page layout not recognised (no parameter list)" }
+    }
+    const blocks = extractLabelledBlocks(paramList)
     const warnings: string[] = []
 
-    let title = pick(blocks, LABELS.short)
-    if (!title) {
-      title = metaContent(html, "og:title")?.replace(/\s*[|\-–]\s*FunPay.*$/i, "").trim()
-      warnings.push(title ? "no 'Short description' block; title taken from og:title" : "title not found")
-    }
-    const description = pick(blocks, LABELS.detailed)
+    const pick = (names: string[]) => Object.entries(blocks).find(([k]) => names.includes(k.toLowerCase()))?.[1]
+    const title = pick(LABELS.short)
+    if (!title) warnings.push("no 'Short description' (title) block")
+    const description = pick(LABELS.detailed)
     if (!description) warnings.push("no 'Detailed description' block")
 
     const params: Record<string, string> = {}
+    const skip = [...LABELS.short, ...LABELS.detailed, ...LABELS.notParams]
     for (const [k, v] of Object.entries(blocks)) {
-      const lk = k.toLowerCase()
-      if ([...LABELS.short, ...LABELS.detailed].includes(lk)) continue
-      if (v.length <= 200) params[k] = v
+      if (skip.includes(k.toLowerCase())) continue
+      if (v && v.length <= 200) params[k] = v
     }
-    const category = pick(blocks, LABELS.category)
-    const game = pick(blocks, LABELS.game)
 
-    const images = extractImages(html, finalUrl)
-    if (!images.length) warnings.push("no images found")
+    const { category, categoryId } = extractCategory(html)
+    if (!category) warnings.push("category not found")
 
-    const p = extractPrice(html)
-    if (!p) warnings.push("price not found")
+    const images = extractGallery(html, finalUrl)
+    const externalMedia = externalMediaLinks(description)
+    if (!images.length) warnings.push(externalMedia.length ? "no images on FunPay; the description links to screenshots/video elsewhere" : "no images on FunPay")
+
+    const options = extractPriceOptions(html)
+    const { chosen, currencies, usedFallback } = pickPrice(options, process.env.SOURCE_PRICE_CURRENCY || "USD")
+    let price = chosen?.price
+    let priceText = chosen?.priceText
+    let currency = chosen?.currency
+    if (usedFallback) warnings.push(`price shown in ${currency}; page offers ${currencies.join(", ")}`)
+    if (!chosen) {
+      const p = extractPrice(html) // older generic reader, only when the buy form isn't there
+      price = p?.price
+      priceText = p?.priceText?.replace(/^from\s+/i, "")
+      currency = currencyOfText(p?.priceText)
+      warnings.push(p ? "price read without the buy form; check it" : "price not found")
+    }
 
     return {
       ...base,
@@ -166,11 +253,15 @@ export const funpay: SourceAdapter = {
       description,
       params,
       category,
-      game,
+      categoryId,
+      game: gameFromCategory(category),
       images,
-      price: p?.price,
-      priceText: p?.priceText,
-      currency: currencyOf(p?.priceText),
+      externalMedia,
+      price,
+      priceText,
+      currency,
+      sellerPrice: chosen?.sellerPrice,
+      priceOptions: options.length ? options : undefined,
       warnings,
     }
   },

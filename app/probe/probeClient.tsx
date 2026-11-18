@@ -191,7 +191,7 @@ export default function ProbeClient() {
               <table className="w-full text-left text-xs">
                 <thead className="text-neutral-400">
                   <tr>
-                    {["Lot id", "Status", "HTTP", "Title", "Desc", "Imgs", "Price", "Params", "Warnings / message", "HTML"].map(h => (
+                    {["Lot id", "Status", "HTTP", "Game", "Title", "Desc", "Imgs", "Price", "Params", "Warnings / message", "HTML"].map(h => (
                       <th key={h} className="whitespace-nowrap border-b border-neutral-700 p-1.5">{h}</th>
                     ))}
                   </tr>
@@ -206,6 +206,7 @@ export default function ProbeClient() {
                         </td>
                         <td className="p-1.5"><span className={`rounded px-1.5 py-0.5 ${statusColor[r.status]}`}>{r.status}</span></td>
                         <td className="p-1.5">{r.httpStatus ?? ""}</td>
+                        <td className="max-w-[140px] p-1.5 text-neutral-300">{r.game || r.category || ""}</td>
                         <td className="max-w-[260px] p-1.5">{r.title}</td>
                         <td className="p-1.5">{r.descriptionChars || ""}</td>
                         <td className="p-1.5">{r.status === "ok" ? r.images : ""}</td>
