@@ -1,18 +1,7 @@
-import { google } from "googleapis"
 import { NextResponse } from "next/server"
+import { normalize, readExistingTitles, sheetErrorMessage } from "@/lib/sheets"
 
 export const runtime = "nodejs"
-
-const auth = new google.auth.JWT({
-  email: process.env.GOOGLE_CLIENT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-})
-
-const sheets = google.sheets({ version: "v4", auth })
-
-const normalize = (value: string) =>
-  value.trim().toLowerCase().replace(/\s+/g, " ")
 
 export async function POST(req: Request) {
   try {
@@ -23,14 +12,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ duplicates: [] })
     }
 
-    const existing = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "D2:D",
-    })
-
-    const existingTitles = new Set(
-      (existing.data.values || []).map(row => normalize(String(row[0] || "")))
-    )
+    const existingTitles = await readExistingTitles()
 
     const seen = new Set<string>()
     const duplicates: string[] = []
@@ -49,6 +31,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ duplicates })
   } catch (err) {
     console.error("check-batch error:", err)
-    return NextResponse.json({ error: "Server error", duplicates: [] }, { status: 500 })
+    return NextResponse.json({ error: sheetErrorMessage(err), duplicates: [] }, { status: 500 })
   }
 }
