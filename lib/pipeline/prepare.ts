@@ -113,6 +113,7 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   if (src.status === "blocked") return { ...base, status: "blocked", flags: [{ level: "warn", code: "blocked", message: src.message || "Blocked by the site - try again later" }] }
   if (src.status === "error") return { ...base, status: "error", flags: [{ level: "error", code: "fetch_error", message: src.message || "Could not read the page" }] }
   for (const w of src.warnings) flag("info", "parse", w)
+  if (src.imagesFrom) flag("warn", "album_images", `Images come from ${src.imagesFrom}, not the offer page: check they show this account`)
 
   base.original = { title: src.title, description: src.description }
   base.images = src.images.filter(u => !/(^|\.)imgur\.com/i.test(safeHost(u))).slice(0, MAX_IMAGES)

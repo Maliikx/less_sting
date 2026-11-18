@@ -20,6 +20,10 @@ export type ProbeRow = {
   title: string
   descriptionChars: number
   images: number
+  /** Album the images came from, when the offer page had none. */
+  imagesFrom?: string
+  /** One line per linked album: "postimg ok 6", "imgur ok 0 (+4 unusable)", ... */
+  albums?: string[]
   priceText?: string
   currency?: string
   params: string[]
@@ -82,6 +86,8 @@ export async function probeLinks(links: string[], deps: ProbeDeps = {}): Promise
       title: offer.title || "",
       descriptionChars: (offer.description || "").length,
       images: offer.images.length,
+      imagesFrom: offer.imagesFrom,
+      albums: offer.albums?.map(a => `${a.kind} ${a.status} ${a.images}${a.unusable ? ` (+${a.unusable} unusable)` : ""}${a.note ? `: ${a.note}` : ""}`),
       priceText: offer.priceText,
       currency: offer.currency,
       params: Object.keys(offer.params),

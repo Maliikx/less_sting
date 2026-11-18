@@ -30,8 +30,12 @@ export type SourceOffer = {
 
   /** Full-size images uploaded to the offer page. */
   images: string[]
-  /** Screenshot albums / videos the description links to (imgur, postimg, YouTube...). Shown to the employee, never fetched. */
+  /** Screenshot albums / videos the description links to (imgur, postimg, YouTube...). postimg/imgur albums are read when the offer has no FunPay images. */
   externalMedia?: string[]
+  /** When `images` came from a linked album instead of FunPay: that album's link. Needs a human look. */
+  imagesFrom?: string
+  /** What happened with each linked album (see lib/sources/media.ts). */
+  albums?: { link: string; kind: string; status: string; images: number; unusable: number; note?: string }[]
   /** Price exactly as on the page, no currency conversion (project rule). */
   price?: number
   priceText?: string

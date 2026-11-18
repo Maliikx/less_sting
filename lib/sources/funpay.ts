@@ -25,7 +25,7 @@ const LABELS = {
   notParams: ["images", "картинки", "in stock", "наличие", "seller's rating", "рейтинг продавца"],
 }
 
-/** Hosts sellers use for screenshot albums / videos when they don't upload images to FunPay. Reported, never fetched. */
+/** Hosts sellers use for screenshot albums / videos when they don't upload images to FunPay (albums are read in ./media.ts). */
 const MEDIA_HOSTS = /\b(?:postimg\.cc|postimages\.org|imgur\.com|prnt\.sc|prntscr\.com|gyazo\.com|ibb\.co|imgbb\.com|youtu\.be|youtube\.com|drive\.google\.com|disk\.yandex\.\w+|yadi\.sk|tracker\.gg|r6skins\.locker|lightshot)\b/i
 const decodeEntities = (s: string) =>
   s
@@ -123,7 +123,7 @@ export function extractGallery(html: string, base: URL): string[] {
   return out
 }
 
-/** Links in the description that point at screenshot albums or videos (shown to the employee; not fetched). */
+/** Links in the description that point at screenshot albums or videos (parse stays pure: nothing is fetched here). */
 export function externalMediaLinks(text?: string): string[] {
   if (!text) return []
   const out: string[] = []
@@ -157,8 +157,8 @@ export function extractPriceOptions(html: string): PriceOption[] {
 }
 
 /**
- * One price, never mixing currencies: the cheapest buyer price in the preferred currency
- * (SOURCE_PRICE_CURRENCY, default USD); if the page doesn't offer it, the first currency listed, with a warning.
+ * One price, never mixing currencies: the cheapest buyer price in the preferred currency.
+ * `usedFallback` = the preferred currency is missing and `chosen` is in another one (the parser then reads NO price).
  */
 export function pickPrice(options: PriceOption[], preferred = "USD"): { chosen?: PriceOption; currencies: string[]; usedFallback: boolean } {
   const currencies = [...new Set(options.map(o => o.currency))]
@@ -233,18 +233,24 @@ export const funpay: SourceAdapter = {
     const externalMedia = externalMediaLinks(description)
     if (!images.length) warnings.push(externalMedia.length ? "no images on FunPay; the description links to screenshots/video elsewhere" : "no images on FunPay")
 
+    // Price = what a buyer pays in USD (decided with the user). No USD option on the page -> no price, flagged; never another currency.
     const options = extractPriceOptions(html)
-    const { chosen, currencies, usedFallback } = pickPrice(options, process.env.SOURCE_PRICE_CURRENCY || "USD")
-    let price = chosen?.price
-    let priceText = chosen?.priceText
-    let currency = chosen?.currency
-    if (usedFallback) warnings.push(`price shown in ${currency}; page offers ${currencies.join(", ")}`)
-    if (!chosen) {
+    const want = (process.env.SOURCE_PRICE_CURRENCY || "USD").toUpperCase()
+    const { chosen, currencies, usedFallback } = pickPrice(options, want)
+    const usable = chosen && !usedFallback ? chosen : undefined
+    let price = usable?.price
+    let priceText = usable?.priceText
+    let currency = usable?.currency
+    if (usedFallback) warnings.push(`no ${want} price on the page (it offers ${currencies.join(", ")}); price not read`)
+    if (!options.length) {
       const p = extractPrice(html) // older generic reader, only when the buy form isn't there
-      price = p?.price
-      priceText = p?.priceText?.replace(/^from\s+/i, "")
-      currency = currencyOfText(p?.priceText)
-      warnings.push(p ? "price read without the buy form; check it" : "price not found")
+      const cur = currencyOfText(p?.priceText)
+      if (p && cur === want) {
+        price = p.price
+        priceText = p.priceText.replace(/^from\s+/i, "")
+        currency = cur
+        warnings.push("price read without the buy form; check it")
+      } else warnings.push(p ? `price found but not in ${want} (${p.priceText}); price not read` : "price not found")
     }
 
     return {
@@ -260,7 +266,7 @@ export const funpay: SourceAdapter = {
       price,
       priceText,
       currency,
-      sellerPrice: chosen?.sellerPrice,
+      sellerPrice: usable?.sellerPrice,
       priceOptions: options.length ? options : undefined,
       warnings,
     }

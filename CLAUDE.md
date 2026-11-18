@@ -48,10 +48,13 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - `/en/` pages show FunPay's own English translation of Russian offers, so the AI translation step is rarely needed.
 - Category + id come from the page's back link (`/lots/<id>/`, e.g. 346 = PUBG Mobile Accounts); game = category minus "Accounts".
 - Images: full-size = the `href` of `a.attachments-thumb` (the background-image is a thumbnail). About 1 in 3 offers has no gallery and
-  links an album/video in the description instead (postimg, imgur, YouTube): reported in `externalMedia`, never fetched.
-- Price: the buy form lists payment options per currency (`data-cy`); which currencies appear depends on the visitor. The parser takes the
-  cheapest buyer price in `SOURCE_PRICE_CURRENCY` (default USD) and never mixes currencies. `data-factors[0]` is the seller's own price
-  (~7% below the buyer price; the round number, e.g. 6600 RUB, is what the seller typed). OPEN QUESTION: buyer price or seller price?
+  links an album/video in the description instead (postimg, imgur, YouTube): listed in `externalMedia`.
+  DECIDED: flag these AND try the album (`lib/sources/media.ts`, max 2 albums per offer). postimg images are used (flag `album_images`
+  for review); imgur images are found but GameBoost refuses imgur, so they are not used. Album markup is UNVERIFIED (check via /probe).
+  GameBoost needs at least one image: no images = needs review, never listed.
+- Price: the buy form lists payment options per currency (`data-cy`); which currencies appear depends on the visitor.
+  DECIDED: price = what a buyer pays in USD (cheapest USD option). No USD on the page = no price + warning, never another currency.
+  `data-factors[0]` is the seller's own price (~7% lower), kept as `sellerPrice` for information only.
 - Dead offer = HTTP 404 with heading "Offer not found". Only the status/heading counts, never the description text.
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 

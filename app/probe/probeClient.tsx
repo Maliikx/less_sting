@@ -209,10 +209,13 @@ export default function ProbeClient() {
                         <td className="max-w-[140px] p-1.5 text-neutral-300">{r.game || r.category || ""}</td>
                         <td className="max-w-[260px] p-1.5">{r.title}</td>
                         <td className="p-1.5">{r.descriptionChars || ""}</td>
-                        <td className="p-1.5">{r.status === "ok" ? r.images : ""}</td>
+                        <td className="p-1.5">
+                          {r.status === "ok" ? r.images : ""}
+                          {r.imagesFrom && <span className="ml-1 rounded bg-yellow-800 px-1" title={r.imagesFrom}>album</span>}
+                        </td>
                         <td className="whitespace-nowrap p-1.5">{r.priceText ?? ""}</td>
                         <td className="max-w-[260px] p-1.5 text-neutral-300">{r.params.join(" | ")}</td>
-                        <td className="max-w-[220px] p-1.5 text-yellow-300">{[...r.warnings, r.message].filter(Boolean).join("; ")}</td>
+                        <td className="max-w-[220px] p-1.5 text-yellow-300">{[...r.warnings, ...(r.albums || []), r.message].filter(Boolean).join("; ")}</td>
                         <td className="p-1.5">
                           {html !== undefined && (
                             <button type="button" className="underline" onClick={() => download(fileName(r), html, "text/html")}>
