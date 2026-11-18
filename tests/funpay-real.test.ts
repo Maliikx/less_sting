@@ -123,3 +123,23 @@ test("price choice: preferred currency, else the first one offered with a warnin
   assert.equal(fb.usedFallback, true)
   assert.equal(pickPrice([], "USD").chosen, undefined)
 })
+
+test("/ form preview: FunPay links get the USD buyer price; images and other sites unchanged", async () => {
+  const { checkSource } = await import("../lib/sourcePage")
+  const { adapterPrice } = await import("../lib/sources/previewPrice")
+  const pages: Record<string, string> = {
+    "https://funpay.com/en/lots/offer?id=82449081": readFileSync(join(DIR, "82449081.html"), "utf8"),
+    "https://shop.example.com/item/1": `<html><body><div class="price">12,50 €</div><a href="https://cdn.example.com/offer/1.jpg">x</a></body></html>`,
+  }
+  const fetcher = async (u: string) => ({ status: 200, html: pages[u], finalUrl: new URL(u) })
+
+  const fp = await checkSource("https://funpay.com/en/lots/offer?id=82449081", { price: adapterPrice, fetcher })
+  assert.equal(fp.price, 83.84) // the old generic reader gives 75.49 (EUR) on this page
+  assert.equal(fp.priceText, "83.84 $")
+  const old = await checkSource("https://funpay.com/en/lots/offer?id=82449081", { fetcher })
+  assert.equal(old.price, 75.49)
+  assert.deepEqual(fp.images, old.images, "images are not touched")
+
+  const other = await checkSource("https://shop.example.com/item/1", { price: adapterPrice, fetcher })
+  assert.equal(other.price, 12.5, "non-FunPay sites keep the generic reader")
+})

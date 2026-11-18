@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { checkSource } from "@/lib/sourcePage"
+import { adapterPrice } from "@/lib/sources/previewPrice"
 
 export const runtime = "nodejs"
 
@@ -9,5 +10,5 @@ export async function GET(req: Request) {
   const url = sp.get("url") || ""
   if (!url) return NextResponse.json({ status: "error", images: [], message: "url is required" }, { status: 400 })
   // &debug=1 shows the parts of the page around prices (for troubleshooting a site's layout)
-  return NextResponse.json(await checkSource(url, { debug: sp.get("debug") === "1" }))
+  return NextResponse.json(await checkSource(url, { debug: sp.get("debug") === "1", price: adapterPrice }))
 }
