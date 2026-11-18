@@ -9,6 +9,8 @@
  * Model names change often - check the provider's current list if a name stops working.
  */
 
+import type { StateStore } from "../state/store"
+
 export type ProviderEntry = { provider: string; model: string; baseUrl: string; apiKey?: string }
 
 const BASES: Record<string, { baseUrl: string; keyEnv?: string }> = {
@@ -65,8 +67,56 @@ export class AiClient {
 
   constructor(
     private chain: ProviderEntry[] = loadChain(),
-    private opts: { fetch?: FetchLike; now?: () => number; timeoutMs?: number; dailyTokenBudget?: number } = {}
+    private opts: {
+      fetch?: FetchLike
+      now?: () => number
+      timeoutMs?: number
+      dailyTokenBudget?: number
+      /** Shared store (Sheet state tab) so every serverless instance sees the same cooldowns and token counts. */
+      store?: StateStore
+    } = {}
   ) {}
+
+  private storeKey = (e: ProviderEntry) => `ai:${this.key(e)}`
+  private storeWarned = false
+
+  private storeFailed(what: string, err: unknown) {
+    // The store is best effort: a Sheets hiccup must never stop listing. Warn once per instance, no details that could hold secrets.
+    if (!this.storeWarned) console.warn(`AI state store ${what} failed: ${err instanceof Error ? err.message.slice(0, 120) : "error"}`)
+    this.storeWarned = true
+  }
+
+  /** Pull the shared state (one read). Remote cooldowns/counters win if they are further along than ours. */
+  async sync() {
+    if (!this.opts.store || !this.chain.length) return
+    try {
+      const remote = await this.opts.store.getMany<State>(this.chain.map(this.storeKey))
+      for (const e of this.chain) {
+        const r = remote.get(this.storeKey(e))?.value
+        if (!r) continue
+        const local = this.st(e)
+        if (r.cooldownUntil > local.cooldownUntil) local.cooldownUntil = r.cooldownUntil
+        if (r.day === local.day && r.tokensToday > local.tokensToday) local.tokensToday = r.tokensToday
+      }
+    } catch (err) {
+      this.storeFailed("read", err)
+    }
+  }
+
+  private async persist(e: ProviderEntry) {
+    if (!this.opts.store) return
+    try {
+      await this.opts.store.set(this.storeKey(e), this.st(e))
+    } catch (err) {
+      this.storeFailed("write", err)
+    }
+  }
+
+  /** usage() after pulling the shared state: what all instances used today. */
+  async sharedUsage() {
+    await this.sync()
+    return this.usage()
+  }
 
   get available() {
     return this.chain.length > 0
@@ -95,6 +145,7 @@ export class AiClient {
     if (!this.chain.length) throw new AiUnavailableError("No AI provider configured (set AI_PROVIDERS and an API key in .env.local)")
     const errors: string[] = []
     const budget = this.opts.dailyTokenBudget ?? Number(process.env.AI_DAILY_TOKEN_BUDGET || 0)
+    await this.sync()
 
     for (const e of this.chain) {
       const s = this.st(e)
@@ -123,6 +174,7 @@ export class AiClient {
           if (res.status === 429 || res.status >= 500) {
             const ra = Number(res.headers.get("retry-after"))
             s.cooldownUntil = this.now() + (Number.isFinite(ra) && ra > 0 ? ra * 1000 : 60_000)
+            await this.persist(e)
             errors.push(`${this.key(e)}: HTTP ${res.status}`)
             break // next chain entry
           }
@@ -130,6 +182,7 @@ export class AiClient {
           const data = JSON.parse(body) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } }
           const text = data.choices?.[0]?.message?.content ?? ""
           s.tokensToday += data.usage?.total_tokens ?? Math.ceil((system.length + user.length + text.length) / 4)
+          await this.persist(e)
           try {
             return { json: parseJsonLoose(text), text, used: this.key(e), tokens: data.usage?.total_tokens ?? 0 }
           } catch {

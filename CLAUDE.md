@@ -8,8 +8,12 @@ Internal Next.js 16 (App Router, React 19, TypeScript, Tailwind, react-hook-form
 - Secrets live in Vercel environment variables (and `.env.local` for local dev only). Never commit `.env.local`.
 - **Serverless: module-level memory is NOT reliable.** Each request may hit a fresh instance; nothing in a `Map`, a class field or a
   module variable survives between requests or is shared between instances. Anything that must persist (AI cooldowns, daily token
-  counters, lot-id cache, dead-check results, cron cursor) goes through a persistent store (`StateStore`, plan step 3).
-  Today `AiClient` (`lib/ai/provider.ts`) still keeps cooldowns/token counts in memory: treat them as per-instance best effort until step 3.
+  counters, dead-check results, cron cursor) goes through the persistent `StateStore` (`lib/state`, plan step 3):
+  the sheet's own tab `LS_STATE` (env `STATE_SHEET_TAB`; KEY | VALUE json | UPDATED_AT | EXPIRES_AT). The store creates that tab,
+  only ever reads/writes inside it, and refuses a same-named tab it did not create. The other tabs (Sheet1, Example, stats, backup)
+  are never edited by it (user rule). Last-write-wins, no locks: fine for cooldowns/counters, not for anything that needs a lock.
+  `AiClient` syncs cooldowns and daily token counts through it (checked live: two instances share a cooldown).
+  The lot-id duplicate cache in /api/ai/prepare stays a 30 s per-instance read cache of the main sheet on purpose (sheet = truth).
 - Function time limits apply: long jobs (probe, dead-check scan) run in small chunks driven by the browser or by cron with a cursor.
 
 ## Sheet layout (first tab, row 1 headers)
@@ -59,6 +63,9 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - Dead offer = HTTP 404 with heading "Offer not found". Only the status/heading counts, never the description text.
   KNOWN ISSUE: `/manage` dead-link check (`checkSource`) still matches "offer not found" anywhere in the page text (not fixed: `/manage` rule).
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
+
+## Known issues to fix in step 4
+- `POST /api/ai/prepare` reads 3 source pages AT THE SAME TIME, which breaks the ~1 request / 1.5 s FunPay rule. Serialise it.
 
 ## Batch listing UI (plan step 4, decided with the user)
 - Employees list 10-20 offers at a time. Input is ONE paste box, one line per offer: `link price seller` (price = number or multiplier).
