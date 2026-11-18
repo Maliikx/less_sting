@@ -1,0 +1,31 @@
+import { NextResponse } from "next/server"
+import { isAuthed } from "@/lib/session"
+import { POST as offersPost } from "@/app/api/offers/route"
+import { gameboostDestination } from "@/lib/destinations/gameboost"
+import { parsePublishRequest } from "@/lib/auto/publishRequest"
+
+export const runtime = "nodejs"
+// Same budget as POST /api/offers (it runs inside this request)
+export const maxDuration = 60
+
+/**
+ * POST /api/auto/publish  { items: PublishItem[] (max 20), settings: { deliveryDuration, deliveryUnit, defaultDescription? } }
+ *   -> { results: PublishResult[], listNow }
+ * Called only when the user presses "Publish selected" on /auto. Runs the existing POST /api/offers code
+ * in-process (duplicate-title check, 422 retry, sheet logging). Offers are created as DRAFTS unless
+ * AUTO_LIST_NOW=1 is set (testing phase, user decision).
+ */
+export async function POST(req: Request) {
+  if (!(await isAuthed(req))) return NextResponse.json({ error: "Not logged in" }, { status: 401 })
+  const listNow = process.env.AUTO_LIST_NOW === "1"
+  const input = parsePublishRequest(await req.json().catch(() => null), listNow)
+  if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 })
+
+  const dest = gameboostDestination(async body => {
+    const res = await offersPost(new Request(new URL("/api/offers", req.url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))
+    return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> }
+  })
+  const results = await dest.publish(input.items, input.settings)
+  console.log(`auto publish: ${results.map(r => `${r.ref}=${r.status}${r.offerId ? `#${r.offerId}` : ""}`).join(" ")}`)
+  return NextResponse.json({ results, listNow })
+}

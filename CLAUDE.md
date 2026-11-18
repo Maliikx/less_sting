@@ -64,14 +64,20 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   KNOWN ISSUE: `/manage` dead-link check (`checkSource`) still matches "offer not found" anywhere in the page text (not fixed: `/manage` rule).
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
-## Known issues to fix in step 4
-- `POST /api/ai/prepare` reads 3 source pages AT THE SAME TIME, which breaks the ~1 request / 1.5 s FunPay rule. Serialise it.
-
 ## Batch listing UI (plan step 4, decided with the user)
 - Employees list 10-20 offers at a time. Input is ONE paste box, one line per offer: `link price seller` (price = number or multiplier).
   Those three are the only manual fields.
 - One compact table to review (status, cleaned title, price, images, game; badges for defaulted fields / removed text), details expand
   on click, "Publish selected" for all ready rows. Lightweight, not a form per offer. The existing `/` form stays as it is.
+- BUILT (step 4): `/auto` page, `lib/auto/*` (lines parser, prepareBatch = one page at a time 1.5 s apart, game resolution, review
+  re-check), `POST /api/auto/publish` -> `lib/destinations` (DestinationAdapter; GameBoost adapter calls the EXISTING
+  `POST /api/offers` handler in-process, one request per seller+game). Server re-checks images + banned words before publishing.
+- TESTING PHASE: offers are created as DRAFTS (`AUTO_LIST_NOW` unset). Set `AUTO_LIST_NOW=1` only when the user says to list for real.
+  The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
+  `GOOGLE_SHEET_ID`) so test publishes don't land in the real Sheet1.
+- Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
+  (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
+- Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
 
 ## NOT verified yet
 1. Behaviour of FunPay over time / at volume (300/day) from Vercel.

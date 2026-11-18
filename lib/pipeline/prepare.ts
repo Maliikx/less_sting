@@ -17,12 +17,17 @@ import type { SourceOffer } from "../sources/types"
 
 export type Flag = { level: "error" | "warn" | "info"; code: string; message: string }
 export type PrepareInput = { link: string; price: string; seller: string }
-export type GameProfile = { gameId?: number; gameName?: string; specs: FieldSpec[] }
+export type GameProfile = { gameId?: number; gameSlug?: string; gameName?: string; specs: FieldSpec[] }
 
 export type PrepareDeps = {
   readOffer: (link: string) => Promise<SourceOffer>
   ai: AiClient | null
   game: GameProfile | null
+  /**
+   * Pick the game from the page (FunPay category) after it is read. Overrides `game` when given.
+   * null = unknown game: the offer is flagged `game_unknown` so the user picks it once.
+   */
+  gameFor?: (src: SourceOffer) => Promise<GameProfile | null>
   /** Return a short description of the existing listing when this source offer is already listed. */
   isDuplicate?: (canonicalId: string, link: string) => Promise<string | null> | string | null
   /** Used when the source has no usable description. */
@@ -41,6 +46,13 @@ export type PreparedOffer = {
   title: string
   description: string
   images: string[]
+  /** Source category ("PUBG Mobile Accounts") and its id: the key for remembering the game. */
+  category?: string
+  categoryId?: string
+  /** GameBoost game this offer goes to (null = unknown, user must pick). */
+  game?: { id: number; slug: string; name: string } | null
+  /** True when the images come from a linked album instead of the offer page. */
+  albumImages?: boolean
   sourcePrice?: number
   priceText?: string
   priceEur?: number
@@ -113,9 +125,30 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   if (src.status === "blocked") return { ...base, status: "blocked", flags: [{ level: "warn", code: "blocked", message: src.message || "Blocked by the site - try again later" }] }
   if (src.status === "error") return { ...base, status: "error", flags: [{ level: "error", code: "fetch_error", message: src.message || "Could not read the page" }] }
   for (const w of src.warnings) flag("info", "parse", w)
+  const offerType = Object.entries(src.params).find(([k]) => /^(offer type|тип предложения)$/i.test(k))?.[1]
+  if (offerType && /\b(rent|rental)\b|аренд/i.test(offerType)) {
+    flag("error", "rental", `This is a rental offer (Offer type: ${offerType}), not an account sale`)
+  }
   if (src.imagesFrom) flag("warn", "album_images", `Images come from ${src.imagesFrom}, not the offer page: check they show this account`)
 
   base.original = { title: src.title, description: src.description }
+  base.category = src.category
+  base.categoryId = src.categoryId
+  base.albumImages = !!src.imagesFrom
+
+  let game = deps.game
+  if (deps.gameFor) {
+    try {
+      game = await deps.gameFor(src)
+    } catch (e) {
+      game = null
+      flag("error", "game_unknown", `Could not load the GameBoost game: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    if (!game && !base.flags.some(f => f.code === "game_unknown")) {
+      flag("error", "game_unknown", `Pick the GameBoost game for "${src.category || src.game || "this category"}" (asked once, then remembered)`)
+    }
+  }
+  base.game = game?.gameId && game.gameSlug ? { id: game.gameId, slug: game.gameSlug, name: game.gameName || game.gameSlug } : deps.gameFor ? null : undefined
   base.images = src.images.filter(u => !/(^|\.)imgur\.com/i.test(safeHost(u))).slice(0, MAX_IMAGES)
   base.sourcePrice = src.price
   base.priceText = src.priceText
@@ -129,7 +162,7 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   let description = d.text
 
   /* 4. cheap field filling from the page's own parameters */
-  const specs = deps.game?.specs ?? []
+  const specs = game?.specs ?? []
   const fields: Record<string, unknown> = fieldsFromParams(specs, src.params)
 
   /* 5. AI only when needed: Russian text, or fields still missing */
