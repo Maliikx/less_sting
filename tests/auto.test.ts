@@ -215,7 +215,7 @@ test("destination: answers map back per row: created, duplicate, failed (with mi
   const dest = gameboostDestination(async body => { calls.push(body); throw new Error("timeout") })
   const out = await dest.publish([ITEM()], SETTINGS)
   assert.equal(calls.length, 1, "never retried blindly")
-  assert.match(out[0].error!, /Check \/manage/)
+  assert.match(out[0].error!, /Press Publish again/)
 })
 
 /* ------------------------------------------------------------ publish request (server-side gate) */
@@ -279,4 +279,59 @@ test("rental offers (FunPay 'Offer type: Rent' / 'Аренда') are flagged and
     readOffer: async () => parseReal("81847225"), ai: null, game: null, listed: () => null,
   })
   assert.ok(!sale.flags.some(f => f.code === "rental"))
+})
+
+/* ------------------------------------------------------------ retry after a timeout (HTTP 504) */
+
+test("publish retry after a timeout: offers already on GameBoost are NOT created again; their sheet row is added", async () => {
+  const { sameTitle, sheetRowForExisting } = await import("../lib/destinations/gameboost")
+  const a = ITEM({ ref: "funpay:1", title: "Alpha 🔥account" })
+  const b = ITEM({ ref: "funpay:2", title: "Beta account" })
+  const c = ITEM({ ref: "funpay:3", title: "Gamma account" })
+  const created: string[] = []
+  const logged: string[] = []
+  const dest = gameboostDestination(
+    async body => {
+      const offers = (body as { offers: { title: string }[] }).offers
+      created.push(...offers.map(o => o.title))
+      return { status: 200, json: { published: offers.map((o, i) => ({ title: o.title.toLowerCase(), id: 700 + i, status: "draft" })) } }
+    },
+    {
+      // "Alpha" was created by the run that timed out
+      findExisting: async it => (sameTitle(it.title, "alpha 🔥 account") ? { id: 555, status: "draft", externalId: "ls-m-x" } : null),
+      logExisting: async found => void logged.push(...found.map(f => f.item.ref)),
+    }
+  )
+  const out = await dest.publish([a, b, c], SETTINGS)
+  assert.deepEqual(created, ["Beta account", "Gamma account"], "Alpha is not created twice")
+  assert.deepEqual(logged, ["funpay:1"])
+  assert.deepEqual(out.map(r => [r.ref, r.status, r.offerId]), [["funpay:1", "created", 555], ["funpay:2", "created", 700], ["funpay:3", "created", 701]])
+  assert.match(out[0].warning!, /already on GameBoost/)
+
+  const row = sheetRowForExisting(a, { id: 555, status: "draft", externalId: "ls-m-x", price: "361.28" }, "18/11/2026")
+  assert.equal(row.length, 12, "A-L, same layout as POST /api/offers")
+  assert.deepEqual([row[0], row[1], row[2], row[6], row[7], row[8], row[10]], [a.link, "x2", "S1", 555, "draft", "ls-m-x", "PUBG Mobile"])
+  assert.match(String(row[4]), /recovered after an interrupted publish/)
+})
+
+test("publish: if GameBoost can't be checked for an existing offer, that offer is not created (no duplicate risk)", async () => {
+  const created: string[] = []
+  const dest = gameboostDestination(
+    async body => { created.push(...(body as { offers: { title: string }[] }).offers.map(o => o.title)); return { status: 200, json: {} } },
+    { findExisting: async () => { throw new Error("GameBoost 503") } }
+  )
+  const out = await dest.publish([ITEM()], SETTINGS)
+  assert.equal(created.length, 0)
+  assert.equal(out[0].status, "failed")
+  assert.match(out[0].error!, /Could not check GameBoost/)
+})
+
+test("publish: a sheet-log failure for recovered offers is reported, the offer is still not duplicated", async () => {
+  const dest = gameboostDestination(async () => ({ status: 200, json: {} }), {
+    findExisting: async () => ({ id: 9, status: "draft" }),
+    logExisting: async () => { throw new Error("sheet down") },
+  })
+  const [r] = await dest.publish([ITEM()], SETTINGS)
+  assert.equal(r.status, "created")
+  assert.match(r.warning!, /sheet row could not be added: sheet down/)
 })

@@ -17,7 +17,7 @@ import type { PublishResult } from "@/lib/destinations/types"
 import type { GameRef } from "@/lib/auto/games"
 
 const CHUNK = 6 // /api/ai/prepare max
-const PUBLISH_CHUNK = 20 // /api/auto/publish max
+const PUBLISH_CHUNK = 3 // small calls: each finishes well inside the function time limit (a 20-offer call timed out)
 const GAP_MS = 1500 // between prepare calls (the server spaces pages inside a call)
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -203,7 +203,10 @@ export default function AutoClient() {
       }
       setNotice(`${created} offer(s) ${settings.listNow ? "listed" : "created as drafts"} on GameBoost.`)
     } catch (e) {
-      setError(`${e instanceof Error ? e.message : String(e)}. Check Manage offers before publishing again.`)
+      setError(
+        `${e instanceof Error ? e.message : String(e)}. Some offers may already be on GameBoost. It is safe to press Publish again: ` +
+          "offers that already exist are found by title and only their sheet row is added, they are not created twice."
+      )
     } finally {
       setBusy(null)
     }

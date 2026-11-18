@@ -12,8 +12,8 @@ import { isGameRef, resolveGame, type GameRef } from "@/lib/auto/games"
 import { PREPARE_MAX_ITEMS, prepareBatch } from "@/lib/auto/batch"
 
 export const runtime = "nodejs"
-// 6 offers x (1.5 s gap + page + possible album + one AI call) stays well under this
-export const maxDuration = 120
+// 6 offers x (1.5 s gap + page + possible album + one AI call): generous ceiling so a slow AI call can't cut a batch
+export const maxDuration = 300
 
 /**
  * POST /api/ai/prepare

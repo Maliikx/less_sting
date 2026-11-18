@@ -82,6 +82,10 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
 - Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
+- Publishing 20 offers in one request hit Vercel's time limit (HTTP 504). POST /api/offers writes the sheet only AFTER all creates,
+  so a timeout can leave offers on GameBoost with no sheet row. Fix: the page publishes 3 offers per request (maxDuration 300), and
+  /api/auto/publish first looks each title up on GameBoost: if it already exists it is NOT created again and its missing sheet row
+  is appended (NOTE "recovered after an interrupted publish"). So pressing Publish again after a timeout is safe.
 
 ## NOT verified yet
 1. Behaviour of FunPay over time / at volume (300/day) from Vercel.

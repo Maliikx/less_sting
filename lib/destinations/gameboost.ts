@@ -100,24 +100,83 @@ export function mapAnswer(items: PublishItem[], status: number, a: Answer): Publ
   })
 }
 
-export function gameboostDestination(callOffersApi: OffersApiCall): DestinationAdapter {
+/** An offer that is already on GameBoost (e.g. created by a publish that timed out before writing the sheet). */
+export type ExistingOffer = { id: number; status: string; externalId?: string | null; price?: string | number }
+
+export type GameBoostDestinationOptions = {
+  /** Look for an offer with this exact title on GameBoost. null = not there. */
+  findExisting?: (item: PublishItem) => Promise<ExistingOffer | null>
+  /** Append sheet rows for offers found on GameBoost (never edits existing rows). */
+  logExisting?: (found: { item: PublishItem; offer: ExistingOffer }[]) => Promise<void>
+}
+
+/**
+ * Publish = for each (seller, game) group:
+ *  1. offers already on GameBoost with the same title are NOT created again; their missing sheet row is added
+ *     (this makes a retry after a timeout safe);
+ *  2. the rest go through the existing POST /api/offers (create + sheet log in one call).
+ * The browser sends small chunks so each call finishes well inside the function time limit.
+ */
+export function gameboostDestination(callOffersApi: OffersApiCall, opts: GameBoostDestinationOptions = {}): DestinationAdapter {
   return {
     id: "gameboost",
     async publish(items, settings) {
       const out: PublishResult[] = []
-      for (const { items: group, body } of buildOffersRequests(items, settings)) {
+      const found: { item: PublishItem; offer: ExistingOffer }[] = []
+      const toCreate: PublishItem[] = []
+      for (const it of items) {
+        let existing: ExistingOffer | null = null
+        try {
+          existing = opts.findExisting ? await opts.findExisting(it) : null
+        } catch (e) {
+          // Can't tell whether it exists: don't risk a duplicate, don't create it.
+          out.push({ ref: it.ref, status: "failed", error: `Could not check GameBoost for an existing offer (${e instanceof Error ? e.message : String(e)}). Try again.` })
+          continue
+        }
+        if (existing) found.push({ item: it, offer: existing })
+        else toCreate.push(it)
+      }
+
+      if (found.length) {
+        let logError: string | undefined
+        try {
+          await opts.logExisting?.(found)
+        } catch (e) {
+          logError = `already on GameBoost, but the sheet row could not be added: ${e instanceof Error ? e.message : String(e)}`
+        }
+        for (const { item, offer } of found) {
+          out.push({
+            ref: item.ref, status: "created", offerId: offer.id, offerStatus: offer.status,
+            warning: logError || "was already on GameBoost (an earlier publish was interrupted); not created again, sheet row added",
+          })
+        }
+      }
+
+      for (const { items: group, body } of buildOffersRequests(toCreate, settings)) {
         let res: { status: number; json: Record<string, unknown> }
         try {
           res = await callOffersApi(body)
         } catch (e) {
           // Outcome unknown for this group: say so plainly, never retry blindly (could double-create).
-          const msg = `Publish call failed (${e instanceof Error ? e.message : String(e)}). Check /manage before publishing these again.`
+          const msg = `Publish call failed (${e instanceof Error ? e.message : String(e)}). Press Publish again: offers already created are found and not duplicated.`
           out.push(...group.map(it => ({ ref: it.ref, status: "failed" as const, error: msg })))
           continue
         }
         out.push(...mapAnswer(group, res.status, res.json as Answer))
       }
-      return out
+      const order = new Map(items.map((it, i) => [it.ref, i]))
+      return out.sort((a, b) => (order.get(a.ref) ?? 0) - (order.get(b.ref) ?? 0))
     },
   }
+}
+
+/** Same title test POST /api/offers uses for its duplicate check (normalized, emojis spaced). */
+export const sameTitle = (a: string, b: string) => normalize(fixTitle(a)) === normalize(fixTitle(b))
+
+/** Sheet row (A-L) for an offer found on GameBoost, in the same layout POST /api/offers writes. */
+export function sheetRowForExisting(item: PublishItem, offer: ExistingOffer, now: string): (string | number)[] {
+  return [
+    item.link.trim(), item.priceInput, item.seller, fixTitle(item.title), `${sheetNote(item)} · recovered after an interrupted publish`, now,
+    offer.id, offer.status, offer.externalId || "", offer.price ?? "", item.game.name, now,
+  ]
 }
