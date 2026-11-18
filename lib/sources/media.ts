@@ -7,9 +7,9 @@
  *                                        so they are returned as `unusable` until they are re-hosted (open question)
  *  - anything else (YouTube, profile sites) -> not an image source; reported only
  *
- * UNVERIFIED: the album page markup was NOT checked against real pages yet (this dev container cannot reach these hosts).
- * Extraction is strict (only direct image-host links) so a wrong guess finds nothing rather than something wrong.
- * Check on the Vercel preview with /probe and then save real album pages as fixtures.
+ * Checked on the Vercel preview (2026-11-18): a real postimg gallery gave 10 images, a real imgur album 2 (unusable).
+ * The tests still use synthetic album pages (this dev container cannot reach these hosts). Extraction is strict
+ * (only direct image-host links) so a layout change finds nothing rather than something wrong.
  */
 import type { FetchedPage } from "./types"
 

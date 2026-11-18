@@ -50,7 +50,7 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - Images: full-size = the `href` of `a.attachments-thumb` (the background-image is a thumbnail). About 1 in 3 offers has no gallery and
   links an album/video in the description instead (postimg, imgur, YouTube): listed in `externalMedia`.
   DECIDED: flag these AND try the album (`lib/sources/media.ts`, max 2 albums per offer). postimg images are used (flag `album_images`
-  for review); imgur images are found but GameBoost refuses imgur, so they are not used: "add images by hand" (user decision, no re-hosting). Album markup is UNVERIFIED (check via /probe).
+  for review); imgur images are found but GameBoost refuses imgur, so they are not used: "add images by hand" (user decision, no re-hosting). Checked on the Vercel preview 2026-11-18: postimg gallery -> 10 images used; imgur album -> 2 found, not used.
   GameBoost needs at least one image: no images = needs review, never listed.
 - Price: the buy form lists payment options per currency (`data-cy`); which currencies appear depends on the visitor.
   DECIDED: price = what a buyer pays in USD (cheapest USD option). No USD on the page = no price + warning, never another currency.
