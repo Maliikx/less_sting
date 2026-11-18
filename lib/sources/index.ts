@@ -1,6 +1,6 @@
 import { fetchPage } from "../sourcePage"
 import { funpay } from "./funpay"
-import type { SourceAdapter, SourceOffer } from "./types"
+import type { FetchedPage, SourceAdapter, SourceOffer } from "./types"
 
 export * from "./types"
 
@@ -24,21 +24,31 @@ export function canonicalIdOf(raw: string): string | null {
   return a ? a.adapter.canonicalId(a.url) : null
 }
 
-/** Fetch + parse one offer. Never throws: network problems come back as status "error". */
-export async function readSourceOffer(raw: string): Promise<SourceOffer> {
+export type PageFetcher = (url: string) => Promise<FetchedPage>
+
+/**
+ * Fetch + parse one offer and also hand back the raw HTML (for the /probe page download).
+ * Never throws: network problems come back as status "error". `fetcher` is injectable for tests.
+ */
+export async function readSourceOfferWithPage(raw: string, fetcher: PageFetcher = fetchPage): Promise<{ offer: SourceOffer; html?: string }> {
   const a = adapterFor(raw)
   if (!a) {
-    return { source: "unknown", canonicalId: "", url: raw, status: "error", message: "Unsupported or invalid link", params: {}, images: [], warnings: [] }
+    return { offer: { source: "unknown", canonicalId: "", url: raw, status: "error", message: "Unsupported or invalid link", params: {}, images: [], warnings: [] } }
   }
   const id = a.adapter.canonicalId(a.url)
   if (!id) {
-    return { source: a.adapter.id, canonicalId: "", url: raw, status: "error", message: "Not a single-offer link", params: {}, images: [], warnings: [] }
+    return { offer: { source: a.adapter.id, canonicalId: "", url: raw, status: "error", message: "Not a single-offer link", params: {}, images: [], warnings: [] } }
   }
   try {
-    const page = await fetchPage(a.adapter.canonicalUrl(a.url))
-    return a.adapter.parse(page)
+    const page = await fetcher(a.adapter.canonicalUrl(a.url))
+    return { offer: a.adapter.parse(page), html: page.html }
   } catch (e) {
     const msg = e instanceof Error ? (e.name === "TimeoutError" ? "The page took too long to open" : e.message) : String(e)
-    return { source: a.adapter.id, canonicalId: id, url: raw, status: "error", message: msg, params: {}, images: [], warnings: [] }
+    return { offer: { source: a.adapter.id, canonicalId: id, url: raw, status: "error", message: msg, params: {}, images: [], warnings: [] } }
   }
+}
+
+/** Fetch + parse one offer. Never throws: network problems come back as status "error". */
+export async function readSourceOffer(raw: string, fetcher: PageFetcher = fetchPage): Promise<SourceOffer> {
+  return (await readSourceOfferWithPage(raw, fetcher)).offer
 }
