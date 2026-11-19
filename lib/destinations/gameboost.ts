@@ -124,17 +124,22 @@ export function gameboostDestination(callOffersApi: OffersApiCall, opts: GameBoo
       const out: PublishResult[] = []
       const found: { item: PublishItem; offer: ExistingOffer }[] = []
       const toCreate: PublishItem[] = []
-      for (const it of items) {
-        let existing: ExistingOffer | null = null
-        try {
-          existing = opts.findExisting ? await opts.findExisting(it) : null
-        } catch (e) {
+      // Look all titles up at once (reads are cheap: 1000/min), then decide per offer.
+      const checks = await Promise.all(
+        items.map(async it => {
+          try {
+            return { it, existing: opts.findExisting ? await opts.findExisting(it) : null }
+          } catch (e) {
+            return { it, error: e instanceof Error ? e.message : String(e) }
+          }
+        })
+      )
+      for (const c of checks) {
+        if ("error" in c) {
           // Can't tell whether it exists: don't risk a duplicate, don't create it.
-          out.push({ ref: it.ref, status: "failed", error: `Could not check GameBoost for an existing offer (${e instanceof Error ? e.message : String(e)}). Try again.` })
-          continue
-        }
-        if (existing) found.push({ item: it, offer: existing })
-        else toCreate.push(it)
+          out.push({ ref: c.it.ref, status: "failed", error: `Could not check GameBoost for an existing offer (${c.error}). Try again.` })
+        } else if (c.existing) found.push({ item: c.it, offer: c.existing })
+        else toCreate.push(c.it)
       }
 
       if (found.length) {

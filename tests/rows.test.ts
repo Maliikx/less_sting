@@ -4,46 +4,52 @@ import {
   actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, repeatedRows, rowProblem, rowsFromPaste, rowsToPrepare,
   selectAll, selectCreated, selectReady, type ResultRow,
 } from "../lib/auto/rows"
-import { EMPLOYEES } from "../lib/employees"
 
 const L = (id: string) => `https://funpay.com/en/lots/offer?id=${id}`
 
-/* ------------------------------------------------------------ the 3 input fields */
+/* ------------------------------------------------------------ input rows: link + price (seller once per batch) */
 
-test("input rows: link + price (number or multiplier) + seller; empty rows ignored; problems named", () => {
+test("input rows: link + price (number or multiplier); rows without a link are unused; problems named", () => {
   assert.equal(rowProblem(newRow()), null, "an empty row is not an error")
-  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "x1.5", seller: "M" })), null)
-  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "12,5", seller: "M" })), null)
-  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "2x", seller: "M" })), null)
-  assert.equal(rowProblem(newRow({ price: "10", seller: "M" })), null, "a row with only the shared price/seller is just unused")
-  assert.equal(rowProblem(newRow({ link: "https://funpay.com/en/lots/346/", price: "10", seller: "M" })), "not a FunPay single-offer link")
-  assert.equal(rowProblem(newRow({ link: L("81847225"), seller: "M" })), "price is missing")
-  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "ten", seller: "M" })), "price must be a number or a multiplier like x2")
-  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "10" })), "pick the seller")
+  assert.equal(rowProblem(newRow({ price: "10" })), null, "a row with only the shared price is just unused")
+  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "x1.5" })), null)
+  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "12,5" })), null)
+  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "2x" })), null)
+  assert.equal(rowProblem(newRow({ link: "https://funpay.com/en/lots/346/", price: "10" })), "not a FunPay single-offer link")
+  assert.equal(rowProblem(newRow({ link: L("81847225") })), "price is missing")
+  assert.equal(rowProblem(newRow({ link: L("81847225"), price: "ten" })), "price must be a number or a multiplier like x2")
 })
 
-test("input rows: same offer twice -> second row marked; only valid first rows are prepared", () => {
+test("input rows: one seller for the whole batch; same offer twice -> second row marked; nothing without a seller", () => {
   const rows = [
-    newRow({ link: L("111222"), price: "10", seller: "M" }),
-    newRow({ link: "https://funpay.com/ru/lots/offer?id=111222", price: "20", seller: "V" }),
-    newRow({ link: L("333444"), price: "x2", seller: "G" }),
-    newRow({ link: L("555666"), price: "", seller: "G" }),
+    newRow({ link: L("111222"), price: "10" }),
+    newRow({ link: "https://funpay.com/ru/lots/offer?id=111222", price: "20" }),
+    newRow({ link: L("333444"), price: "x2" }),
+    newRow({ link: L("555666"), price: "" }),
     newRow(),
   ]
   assert.deepEqual([...repeatedRows(rows)], [rows[1].id])
-  assert.deepEqual(rowsToPrepare(rows), [
-    { key: "funpay:111222", link: L("111222"), price: "10", seller: "M" },
-    { key: "funpay:333444", link: L("333444"), price: "x2", seller: "G" },
+  assert.deepEqual(rowsToPrepare(rows, "GS"), [
+    { key: "funpay:111222", link: L("111222"), price: "10", seller: "GS" },
+    { key: "funpay:333444", link: L("333444"), price: "x2", seller: "GS" },
   ])
+  assert.deepEqual(rowsToPrepare(rows, ""), [], "no seller chosen -> nothing to prepare")
 })
 
-test("paste many links: price/seller optional per line, else the 'for all' values; unknown seller codes not invented", () => {
-  const rows = rowsFromPaste([`${L("111222")} x1.5 ms`, L("333444"), "", `${L("555666")}\t30\tNOPE`, "no link here"].join("\n"), { price: "x2", seller: "V" }, EMPLOYEES)
-  assert.deepEqual(rows.map(r => [r.link, r.price, r.seller]), [
-    [L("111222"), "x1.5", "Ms"],
-    [L("333444"), "x2", "V"],
-    [L("555666"), "30", "V"],
-  ])
+test("paste many links: price optional per line (else 'Price for all'); other words ignored", () => {
+  const rows = rowsFromPaste([`${L("111222")} x1.5 Ms`, L("333444"), "", `${L("555666")}\t30`, "no link here"].join("\n"), "x2")
+  assert.deepEqual(rows.map(r => [r.link, r.price]), [[L("111222"), "x1.5"], [L("333444"), "x2"], [L("555666"), "30"]])
+})
+
+test("title diff: shows exactly the words cleaning removed; spacing/emoji spacing is not a change", async () => {
+  const { diffWords, titleChanged } = await import("../lib/auto/diff")
+  const emoji = diffWords("🔥Fortnite Account | Instant Delivery", "🔥 Fortnite Account")
+  assert.deepEqual(emoji.filter(p => p.kind === "removed").map(p => p.text).join(" "), "| Instant Delivery", "emoji spacing is not a removal")
+  const parts = diffWords("Fortnite Account | Instant Delivery | 200 skins | Warranty", "Fortnite Account | 200 skins")
+  assert.deepEqual(parts.filter(p => p.kind === "removed").map(p => p.text), ["Instant Delivery |", "| Warranty"])
+  assert.equal(parts.filter(p => p.kind === "same").map(p => p.text).join(" "), "Fortnite Account | 200 skins")
+  assert.equal(titleChanged("Blood  Raven X-Suit", "Blood Raven X-Suit"), false)
+  assert.equal(titleChanged("Blood Raven | FunPay", "Blood Raven"), true)
 })
 
 /* ------------------------------------------------------------ buttons: selection + action targets */

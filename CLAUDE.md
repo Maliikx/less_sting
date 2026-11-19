@@ -65,10 +65,21 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
 ## Batch listing UI (plan step 4, decided with the user)
-- Employees list 10-20 offers at a time. `/auto` looks like the `/` form but each row has ONLY 3 fields: offer link, price
-  (number or multiplier), seller code (same list as `/`, `lib/employees.ts`). Plus: seller for all, price for all, +10 rows,
-  "paste many links". Settings (remembered per browser): delivery time + unit, default description, delivery instructions,
-  and "Create as draft" / "List immediately".
+- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered);
+  each row has only offer link + price (number or multiplier). Plus price for all, +10 rows, "paste many links" (`link [price]`).
+  Settings next to the publish buttons (remembered per browser): delivery time + unit, default description, delivery instructions,
+  "Create as draft" / "List immediately". The page shows 4 steps (offers, prepare = read + clean, review, publish).
+- Duplicates are checked by TITLE, not link (user decision): the page's original title and the cleaned title vs the sheet TITLE
+  column, and vs earlier offers in the batch. The page is read first (no AI is spent on duplicates). The same link twice in one batch
+  is still skipped before reading.
+- No description at all -> the description is just the seller tag `#<seller>-<last 8 chars of the link>` (same tag POST /api/offers
+  appends to every listing, so it appears once). User asked for "last 6 digits": switching the tag everywhere would change `/` too (asked).
+- The review table shows each cleaned title and, under it, the original with removed words struck through (`lib/auto/diff.ts`).
+- Offers with no images: the user sets a DEFAULT IMAGE per GameBoost game once (link, not imgur), stored in the sheet's own tab
+  `DEFAULT_IMG` (GAME_ID | GAME_NAME | IMAGE_URL | UPDATED_AT; env DEFAULT_IMG_TAB; same own-tab guard as LS_STATE, `lib/state/ownTab.ts`).
+  Later offers of that game without images use it automatically (warn flag `default_image`, sheet NOTE "default image").
+- Speed: page reads START >= 1.5 s apart (shared gate) but up to 3 offers are in flight, so AI calls overlap the next read; 8 offers
+  per prepare call; game field specs cached in LS_STATE for 24 h; publish sends 5 per call; existing-offer lookups run in parallel.
 - One compact table to review (status, cleaned title, price, images, game; badges for defaulted fields / removed text), details expand
   on click. Buttons act on ticked rows and show counts: Publish (ready rows), List now (drafts), Back to draft (listed), Delete
   (created offers; confirmation; uses the existing DELETE route that refuses sold/ordered offers and marks the sheet row `deleted`).
@@ -86,6 +97,13 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   so a timeout can leave offers on GameBoost with no sheet row. Fix: the page publishes 3 offers per request (maxDuration 300), and
   /api/auto/publish first looks each title up on GameBoost: if it already exists it is NOT created again and its missing sheet row
   is appended (NOTE "recovered after an interrupted publish"). So pressing Publish again after a timeout is safe.
+
+## AI capacity (2026-11-19 estimate; limits change, check the Groq console)
+- One AI call ~1,300 tokens on real offers (range ~870-1,800). AI runs only when text is not English (rare: /en/ pages are translated)
+  or GameBoost fields are missing from the FunPay params.
+- Groq free (third-party sources, unofficial): llama-3.3-70b ~1,000 req/day, 100k-200k tokens/day, 6k-12k tokens/min;
+  llama-3.1-8b ~14,400 req/day, ~500k tokens/day, ~6k tokens/min. Limits are per Groq organization (shared by all employees).
+  Gemini 2.5 Flash free tier reportedly cut to ~20 req/day (unconfirmed). => worst case (AI on every offer) ~450 offers/day.
 
 ## NOT verified yet
 1. Behaviour of FunPay over time / at volume (300/day) from Vercel.

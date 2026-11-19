@@ -25,7 +25,7 @@ export function revalidate(row: ReviewRow): ReviewRow {
   }
   if (row.title.trim().length < 3) add("title", "Title is empty or too short")
   if (row.title.length > 255) add("title", "Title is over 255 characters")
-  if (!row.description.trim()) add("description", "No description")
+  // An empty description is fine: publishing uses the seller tag "#<seller>-<link end>" (user decision).
   const price = resolvePrice(row.priceInput, row.sourcePrice !== undefined ? String(row.sourcePrice) : undefined)
   if (price.error) add("price", price.error)
   const left = [...findViolations(row.title), ...findViolations(row.description)]
@@ -55,7 +55,7 @@ export function toPublishItem(row: ReviewRow): PublishItem {
     sourcePrice: row.sourcePrice,
     accountData: row.accountData,
     defaulted: row.defaulted.map(d => d.key),
-    notes: row.albumImages ? ["album images"] : [],
+    notes: [...(row.albumImages ? ["album images"] : []), ...(row.defaultImage ? ["default image"] : [])],
     game: row.game,
   }
 }

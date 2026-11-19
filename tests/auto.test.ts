@@ -56,24 +56,61 @@ function readerFor(pages: Record<string, SourceOffer>, log: string[]) {
   }
 }
 
-test("batch: one page at a time, 1.5 s apart; duplicates and repeats are never read and cost no wait", async () => {
+test("batch: duplicates are found by TITLE (original or cleaned) in the sheet and in this batch; the same link twice is not read", async () => {
+  const { titleKey } = await import("../lib/text")
   const log: string[] = []
-  const waits: number[] = []
-  const pages = { "81847225": parseReal("81847225"), "81846982": parseReal("81846982") }
+  const a = parseReal("81847225") // "Blood Raven X-Suit | Glacier M416 Lv6 | OG S6 S7 S8 RP | S5 Hair"
+  const b = parseReal("81846982")
+  const c = { ...parseReal("81847074"), title: a.title } // another lot, same title as `a`
+  const d = parseReal("62421214") // emoji title: matched the way the sheet stores it (space after emojis)
+  const pages = { "81847225": a, "81846982": b, "81847074": c, "62421214": d }
+  const sheet = new Map([[titleKey(b.title!), "sheet row 12: C1S3 Conqueror"], [titleKey(d.title!), "sheet row 40: Apex"]])
   const out = await prepareBatch(
     [
       { link: L("81847225"), price: "x2", seller: "S1" },
-      { link: L("999000"), price: "10", seller: "S1" }, // in the sheet
-      { link: L("81847225"), price: "x3", seller: "S2" }, // repeated in batch
-      { link: L("81846982"), price: "40", seller: "S1" },
+      { link: L("81846982"), price: "10", seller: "S1" }, // title in the sheet
+      { link: L("81847225"), price: "x3", seller: "S1" }, // same link again
+      { link: L("81847074"), price: "40", seller: "S1" }, // same title as line 1
+      { link: L("62421214"), price: "40", seller: "S1" },
     ],
-    { readOffer: readerFor(pages, log), ai: null, game: null, listed: id => (id === "funpay:999000" ? "sheet row 12" : null), sleep: async ms => void waits.push(ms) }
+    { readOffer: readerFor(pages, log), ai: null, game: null, listedTitle: k => sheet.get(k) ?? null, sleep: async () => {}, concurrency: 1 }
   )
-  assert.deepEqual(log, ["81847225", "81846982"])
-  assert.deepEqual(waits, [1500])
-  assert.deepEqual([out[1].status, out[2].status], ["duplicate", "duplicate"])
-  assert.match(out[1].flags[0].message, /sheet row 12/)
-  assert.match(out[2].flags[0].message, /repeated in this batch/)
+  assert.deepEqual(log, ["81847225", "81846982", "81847074", "62421214"], "the repeated link is never read")
+  assert.deepEqual(out.map(o => o.status === "duplicate"), [false, true, true, true, true])
+  assert.match(out[1].flags[0].message, /same title\): sheet row 12/)
+  assert.match(out[2].flags[0].message, /earlier in this batch/)
+  assert.match(out[3].flags[0].message, /same title as line 1/)
+  assert.match(out[4].flags[0].message, /sheet row 40/)
+  assert.equal(out[1].aiUsed, false, "no AI spent on duplicates")
+})
+
+test("batch: page reads START at least 1.5 s apart even with 3 offers in flight; results keep input order", async () => {
+  const { startGate } = await import("../lib/auto/batch")
+  let t = 0
+  const starts: number[] = []
+  const gate = startGate(1500, async ms => { t += ms }, () => t)
+  for (let i = 0; i < 4; i++) starts.push(await gate())
+  assert.deepEqual(starts, [0, 1500, 3000, 4500])
+
+  // concurrent, real time (small gap): a slow first offer does not hold up the next read, but reads stay spaced
+  const readAt: number[] = []
+  const ids = ["81847225", "81846982", "81847074", "81846752"]
+  const t0 = Date.now()
+  const out = await prepareBatch(
+    ids.map(id => ({ link: L(id), price: "10", seller: "S1" })),
+    {
+      readOffer: async link => {
+        readAt.push(Date.now())
+        const id = new URL(link).searchParams.get("id")!
+        if (id === "81847225") await new Promise(r => setTimeout(r, 200)) // slow (like an AI call)
+        return parseReal(id)
+      },
+      ai: null, game: null, listedTitle: () => null, gapMs: 40, concurrency: 3,
+    }
+  )
+  for (let i = 1; i < readAt.length; i++) assert.ok(readAt[i] - readAt[i - 1] >= 38, `reads ${i - 1}->${i} were ${readAt[i] - readAt[i - 1]} ms apart`)
+  assert.ok(readAt[1] - t0 < 150, "the 2nd read did not wait for the slow 1st offer")
+  assert.deepEqual(out.map(o => o.canonicalId), ids.map(id => `funpay:${id}`))
 })
 
 test("batch: game from the category; unknown game -> flagged game_unknown, needs review", async () => {
@@ -88,7 +125,7 @@ test("batch: game from the category; unknown game -> flagged game_unknown, needs
       ai: null,
       game: null,
       gameFor: async src => (src.categoryId === "346" ? { gameId: PUBG.id, gameSlug: PUBG.slug, gameName: PUBG.name, specs: [{ key: "level", type: "integer", required: true }] } : null),
-      listed: () => null,
+      listedTitle: () => null,
       sleep: async () => {},
     }
   )
@@ -134,7 +171,7 @@ async function preparedRow(id: string, patch: Partial<SourceOffer> = {}): Promis
     readOffer: async () => ({ ...parseReal(id), ...patch }),
     ai: null,
     game: { gameId: PUBG.id, gameSlug: PUBG.slug, gameName: PUBG.name, specs: [] },
-    listed: () => null,
+    listedTitle: () => null,
   })
   return { ...row, game: PUBG }
 }
@@ -163,7 +200,7 @@ test("review: adding image links by hand turns a no-images offer ready; imgur an
 test("review: dead / duplicate / blocked rows stay as they are", async () => {
   const [dead] = await prepareBatch([{ link: L("71122224"), price: "20", seller: "S1" }], {
     readOffer: async () => funpay.parse({ status: 404, html: real("dead-71122224"), finalUrl: new URL(L("71122224")) }),
-    ai: null, game: null, listed: () => null,
+    ai: null, game: null, listedTitle: () => null,
   })
   assert.equal(revalidate({ ...dead, images: ["https://x/y.jpg"] }).status, "dead")
 })
@@ -266,17 +303,17 @@ test("routes need a session: /api/auto/publish and /api/ai/prepare", async () =>
 test("rental offers (FunPay 'Offer type: Rent' / 'Аренда') are flagged and cannot be published", async () => {
   const rent = { ...parseReal("81847225"), params: { "Offer type": "Rent", Level: "82" } }
   const [row] = await prepareBatch([{ link: L("81847225"), price: "20", seller: "S1" }], {
-    readOffer: async () => rent, ai: null, game: { gameId: PUBG.id, gameSlug: PUBG.slug, gameName: PUBG.name, specs: [] }, listed: () => null,
+    readOffer: async () => rent, ai: null, game: { gameId: PUBG.id, gameSlug: PUBG.slug, gameName: PUBG.name, specs: [] }, listedTitle: () => null,
   })
   assert.ok(row.flags.some(f => f.code === "rental"))
   assert.equal(row.status, "needs_review")
   assert.equal(revalidate({ ...row, game: PUBG }).status, "needs_review", "an edit does not clear it")
   const [ru] = await prepareBatch([{ link: L("81847225"), price: "20", seller: "S1" }], {
-    readOffer: async () => ({ ...rent, params: { "Тип предложения": "Аренда" } }), ai: null, game: null, listed: () => null,
+    readOffer: async () => ({ ...rent, params: { "Тип предложения": "Аренда" } }), ai: null, game: null, listedTitle: () => null,
   })
   assert.ok(ru.flags.some(f => f.code === "rental"))
   const [sale] = await prepareBatch([{ link: L("81847225"), price: "20", seller: "S1" }], {
-    readOffer: async () => parseReal("81847225"), ai: null, game: null, listed: () => null,
+    readOffer: async () => parseReal("81847225"), ai: null, game: null, listedTitle: () => null,
   })
   assert.ok(!sale.flags.some(f => f.code === "rental"))
 })
@@ -334,4 +371,20 @@ test("publish: a sheet-log failure for recovered offers is reported, the offer i
   const [r] = await dest.publish([ITEM()], SETTINGS)
   assert.equal(r.status, "created")
   assert.match(r.warning!, /sheet row could not be added: sheet down/)
+})
+
+test("no description: the seller tag '#<seller>-<link end>' is used (page, edit, and publish)", async () => {
+  const [row] = await prepareBatch([{ link: L("81847225"), price: "20", seller: "M" }], {
+    readOffer: async () => ({ ...parseReal("81847225"), description: "" }),
+    ai: null, game: { gameId: PUBG.id, gameSlug: PUBG.slug, gameName: PUBG.name, specs: [] }, listedTitle: () => null,
+  })
+  assert.equal(row.description, "#M-81847225")
+  assert.ok(row.flags.some(f => f.code === "seller_tag_description"))
+  assert.ok(!row.flags.some(f => f.code === "description"))
+  assert.equal(revalidate({ ...row, game: PUBG, description: "" }).status, "ready", "emptied by hand is fine")
+  const r = parsePublishRequest({ items: [ITEM({ description: "", seller: "M" })], settings: { deliveryDuration: 1, deliveryUnit: "hours" } })
+  assert.ok(!("error" in r))
+  assert.equal(r.items[0].description, "#M-81847225")
+  const withDefault = parsePublishRequest({ items: [ITEM({ description: "" })], settings: { deliveryDuration: 1, deliveryUnit: "hours", defaultDescription: "Full access account." } })
+  assert.ok(!("error" in withDefault) && withDefault.items[0].description === "Full access account.", "the default description wins when set")
 })

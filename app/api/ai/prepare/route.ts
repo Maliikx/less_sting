@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server"
 import { AiClient, loadChain } from "@/lib/ai/provider"
 import { getStateStore } from "@/lib/state"
-import { canonicalIdOf, readSourceOffer } from "@/lib/sources"
+import { readSourceOffer } from "@/lib/sources"
+import { titleKey } from "@/lib/text"
+import { getDefaultImageStore } from "@/lib/auto/defaultImagesServer"
 import type { GameProfile } from "@/lib/pipeline/prepare"
+import type { FieldSpec } from "@/lib/gameFields"
 import { loadGameProfile } from "@/lib/gameProfile"
 import { listGames } from "@/lib/gameboost"
 import { COL, readRows, sheetErrorMessage } from "@/lib/sheets"
@@ -30,26 +33,37 @@ export const maxDuration = 300
 const globalAi = globalThis as unknown as { __lsAi?: AiClient }
 const ai = (globalAi.__lsAi ??= new AiClient(loadChain(), { store: getStateStore() }))
 
-// Sheet snapshot of already-listed source ids, refreshed at most every 30 s (Sheets read quota).
-// Deliberately NOT in the StateStore: it is only a read cache of the main sheet (the source of truth),
+// Sheet snapshot of listed TITLES (duplicate check is by title, user decision), refreshed at most every 30 s (Sheets
+// read quota). Deliberately NOT in the StateStore: only a read cache of the main sheet (the source of truth),
 // at most 30 s stale per instance; storing it in the state tab would add a Sheets read and fix nothing.
-let idCache: { at: number; ids: Map<string, string> } | null = null
-async function listedIds() {
-  if (idCache && Date.now() - idCache.at < 30_000) return idCache.ids
+let titleCache: { at: number; titles: Map<string, string> } | null = null
+async function listedTitles() {
+  if (titleCache && Date.now() - titleCache.at < 30_000) return titleCache.titles
   const rows = await readRows()
-  const ids = new Map<string, string>()
+  const titles = new Map<string, string>()
   for (const r of rows) {
-    const id = canonicalIdOf((r.cells[COL.LINK] || "").trim())
-    if (id && !ids.has(id)) ids.set(id, `sheet row ${r.rowNumber}: ${(r.cells[COL.TITLE] || "").slice(0, 60)}`)
+    const k = titleKey(r.cells[COL.TITLE] || "")
+    if (k && !titles.has(k)) titles.set(k, `sheet row ${r.rowNumber}: ${(r.cells[COL.TITLE] || "").slice(0, 60)}`)
   }
-  idCache = { at: Date.now(), ids }
-  return ids
+  titleCache = { at: Date.now(), titles }
+  return titles
 }
 
 type Item = { link?: string; price?: string; seller?: string }
 
+const PROFILE_TTL_MS = 24 * 3600_000
+
+/**
+ * Game field specs: shared cache in LS_STATE (24 h) so a fresh serverless instance does not re-load the GameBoost
+ * template and re-run the required-field probe for every game; falls back to loading them.
+ */
 async function profileFor(g: GameRef): Promise<GameProfile> {
+  const store = getStateStore()
+  const key = `gameprofile:${g.id}`
+  const hit = await store.get<FieldSpec[]>(key).catch(() => null)
+  if (hit && Array.isArray(hit.value)) return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: hit.value }
   const p = await loadGameProfile({ gameId: g.id, gameSlug: g.slug, gameName: g.name })
+  await store.set(key, p.specs, { ttlMs: PROFILE_TTL_MS }).catch(() => {})
   return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: p.specs }
 }
 
@@ -65,9 +79,14 @@ export async function POST(req: Request) {
   if (!items.length) return NextResponse.json({ error: "items is required" }, { status: 400 })
   if (items.length > PREPARE_MAX_ITEMS) return NextResponse.json({ error: `At most ${PREPARE_MAX_ITEMS} items per request` }, { status: 400 })
 
-  let ids: Map<string, string>
+  let titles: Map<string, string>
+  // Default images per game (small own tab). A problem with it must not stop preparing: offers just ask for images.
+  const defaults = await getDefaultImageStore().all().catch(e => {
+    console.warn("default images unavailable:", e instanceof Error ? e.message.slice(0, 120) : "error")
+    return new Map<number, { url: string }>()
+  })
   try {
-    ids = await listedIds()
+    titles = await listedTitles()
   } catch (e) {
     return NextResponse.json({ error: sheetErrorMessage(e) }, { status: 500 })
   }
@@ -105,7 +124,8 @@ export async function POST(req: Request) {
             return profiles.get(g.id)!
           },
       defaultDescription: body.defaultDescription,
-      listed: id => ids.get(id) ?? null,
+      listedTitle: k => titles.get(k) ?? null,
+      defaultImageFor: gameId => defaults.get(gameId)?.url ?? null,
     }
   )
   return NextResponse.json({ results, aiUsage: ai.usage() })

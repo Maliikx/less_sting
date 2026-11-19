@@ -1,5 +1,5 @@
 import { findViolations } from "../cleaning/clean"
-import { listingProblems } from "../offerRules"
+import { descriptionTag, listingProblems } from "../offerRules"
 import type { PublishItem, PublishSettings } from "../destinations/types"
 
 export const PUBLISH_MAX_ITEMS = 20
@@ -44,7 +44,8 @@ export function parsePublishRequest(body: unknown): { error: string } | { items:
     if (!str("seller").trim()) return { error: `${where}: no seller code` }
     if (!str("priceInput").trim()) return { error: `${where}: no price` }
     if (!game || typeof game.id !== "number" || !game.slug) return { error: `${where}: no game` }
-    const problems = listingProblems({ title: str("title"), description: str("description") || settings.defaultDescription || "", imageUrls: images })
+    const description = str("description").trim() || settings.defaultDescription?.trim() || descriptionTag(str("seller"), str("link"))
+    const problems = listingProblems({ title: str("title"), description, imageUrls: images })
     if (problems.length) return { error: `${where} (${str("title").slice(0, 40)}): ${problems.join("; ")}` }
     const left = [...findViolations(str("title")), ...findViolations(str("description"))]
     if (left.length) return { error: `${where} (${str("title").slice(0, 40)}): still contains ${[...new Set(left.map(v => v.text))].join(", ")}` }
@@ -53,7 +54,7 @@ export function parsePublishRequest(body: unknown): { error: string } | { items:
       link: str("link"),
       seller: str("seller").trim(),
       title: str("title"),
-      description: str("description"),
+      description,
       images,
       priceInput: str("priceInput").trim(),
       sourcePrice: typeof it.sourcePrice === "number" ? it.sourcePrice : undefined,

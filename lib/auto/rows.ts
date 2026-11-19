@@ -6,10 +6,11 @@ import type { PublishResult } from "../destinations/types"
 
 /* ------------------------------------------------------------ input rows (the 3 fields) */
 
-export type InputRow = { id: string; link: string; price: string; seller: string }
+/** One offer line: link + price. The seller is chosen ONCE for the whole batch (each seller lists for themselves). */
+export type InputRow = { id: string; link: string; price: string }
 
 let seq = 0
-export const newRow = (o: Partial<InputRow> = {}): InputRow => ({ id: `r${Date.now().toString(36)}${(seq++).toString(36)}`, link: "", price: "", seller: "", ...o })
+export const newRow = (o: Partial<InputRow> = {}): InputRow => ({ id: `r${Date.now().toString(36)}${(seq++).toString(36)}`, link: "", price: "", ...o })
 
 const PRICE_OK = /^\d+(?:[.,]\d+)?$/
 
@@ -20,7 +21,6 @@ export function rowProblem(r: InputRow): string | null {
   const p = r.price.trim()
   if (!p) return "price is missing"
   if (!isMultiplier(p) && !PRICE_OK.test(p)) return "price must be a number or a multiplier like x2"
-  if (!r.seller) return "pick the seller"
   return null
 }
 
@@ -37,26 +37,26 @@ export function repeatedRows(rows: InputRow[]): Set<string> {
   return out
 }
 
-/** Rows ready to send to Prepare (valid, first per lot id). */
-export function rowsToPrepare(rows: InputRow[]) {
+/** Rows ready to send to Prepare (valid, first per lot id), all for the batch's seller. None without a seller. */
+export function rowsToPrepare(rows: InputRow[], seller: string) {
+  if (!seller) return []
   const rep = repeatedRows(rows)
   return rows
     .filter(r => r.link.trim() && !rep.has(r.id) && !rowProblem(r))
-    .map(r => ({ key: canonicalIdOf(r.link)!, link: r.link.trim(), price: r.price.trim().replace(",", "."), seller: r.seller }))
+    .map(r => ({ key: canonicalIdOf(r.link)!, link: r.link.trim(), price: r.price.trim().replace(",", "."), seller }))
 }
 
 /**
- * "Paste many links": one per line, `link [price] [seller]` in any order (tabs/commas OK).
- * Missing price/seller are taken from the defaults (the "for all" boxes). Unknown seller codes are dropped.
+ * "Paste many links": one per line, `link [price]` (tabs/commas OK; other words on the line are ignored).
+ * A missing price is taken from "Price for all".
  */
-export function rowsFromPaste(text: string, defaults: { price?: string; seller?: string }, sellers: readonly string[]): InputRow[] {
+export function rowsFromPaste(text: string, defaultPrice = ""): InputRow[] {
   const out: InputRow[] = []
   for (const [i, raw] of text.split(/\r?\n/).entries()) {
     if (!raw.trim()) continue
     const l = parseLine(raw, i + 1)
     if (!l.link) continue
-    const seller = sellers.find(s => s.toLowerCase() === l.seller.trim().toLowerCase()) || defaults.seller || ""
-    out.push(newRow({ link: l.link, price: l.price || defaults.price || "", seller }))
+    out.push(newRow({ link: l.link, price: l.price || defaultPrice }))
   }
   return out
 }

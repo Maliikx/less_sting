@@ -3,7 +3,7 @@ import type { CompiledTerms } from "../cleaning/blocklist"
 import { aiExtract } from "../ai/extract"
 import { AiUnavailableError, type AiClient } from "../ai/provider"
 import { applyDefaults, isEmptyValue, type Defaulted, type FieldSpec } from "../gameFields"
-import { fixTitle, resolvePrice } from "../offerRules"
+import { descriptionTag, fixTitle, resolvePrice } from "../offerRules"
 import { canonicalIdOf } from "../sources/index"
 import type { SourceOffer } from "../sources/types"
 
@@ -28,8 +28,15 @@ export type PrepareDeps = {
    * null = unknown game: the offer is flagged `game_unknown` so the user picks it once.
    */
   gameFor?: (src: SourceOffer) => Promise<GameProfile | null>
-  /** Return a short description of the existing listing when this source offer is already listed. */
+  /** The game's default image (DEFAULT_IMG tab), used when the offer has no images at all. */
+  defaultImageFor?: (gameId: number) => string | null
+  /** Same offer earlier in this batch (by lot id): stop before reading the page. Return why, or null. */
   isDuplicate?: (canonicalId: string, link: string) => Promise<string | null> | string | null
+  /**
+   * Already listed? Checked by TITLE (user decision): the page's original title and the cleaned title are compared
+   * with the sheet's TITLE column. Runs after the page is read and cleaned, before any AI call. Return where, or null.
+   */
+  isDuplicateTitle?: (titles: { original: string; cleaned: string }) => Promise<string | null> | string | null
   /** Used when the source has no usable description. */
   defaultDescription?: string
   terms?: CompiledTerms
@@ -53,6 +60,8 @@ export type PreparedOffer = {
   game?: { id: number; slug: string; name: string } | null
   /** True when the images come from a linked album instead of the offer page. */
   albumImages?: boolean
+  /** True when the only image is the game's default image (the offer had none). */
+  defaultImage?: boolean
   sourcePrice?: number
   priceText?: string
   priceEur?: number
@@ -112,7 +121,7 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   }
   const flag = (level: Flag["level"], code: string, message: string) => base.flags.push({ level, code, message })
 
-  /* 1. duplicate check by lot id, before spending anything */
+  /* 1. same offer twice in this batch (lot id): stop before spending anything */
   const id = canonicalIdOf(base.link)
   if (!id) return { ...base, status: "error", flags: [{ level: "error", code: "bad_link", message: "Not a supported single-offer link" }] }
   base.canonicalId = id
@@ -150,6 +159,14 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   }
   base.game = game?.gameId && game.gameSlug ? { id: game.gameId, slug: game.gameSlug, name: game.gameName || game.gameSlug } : deps.gameFor ? null : undefined
   base.images = src.images.filter(u => !/(^|\.)imgur\.com/i.test(safeHost(u))).slice(0, MAX_IMAGES)
+  if (!base.images.length && base.game) {
+    const url = deps.defaultImageFor?.(base.game.id)
+    if (url) {
+      base.images = [url]
+      base.defaultImage = true
+      flag("warn", "default_image", `No images on the offer: the default image for ${base.game.name} is used`)
+    }
+  }
   base.sourcePrice = src.price
   base.priceText = src.priceText
   if (src.currency && src.currency !== "EUR") flag("info", "currency", `Source price is in ${src.currency}; used as-is (no conversion)`)
@@ -160,6 +177,17 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   base.removed.push(...t.removed, ...d.removed)
   let title = t.text
   let description = d.text
+
+  /* 3b. already listed? by title (original and cleaned), before any AI cost */
+  const dupTitle = await deps.isDuplicateTitle?.({ original: src.title || "", cleaned: fixTitle(title) })
+  if (dupTitle) {
+    return {
+      ...base,
+      status: "duplicate",
+      title: fixTitle(title),
+      flags: [{ level: "warn", code: "duplicate", message: `Already listed (same title): ${dupTitle}` }],
+    }
+  }
 
   /* 4. cheap field filling from the page's own parameters */
   const specs = game?.specs ?? []
@@ -198,6 +226,11 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   title = fixTitle(t2.text)
   description = d2.text || (deps.defaultDescription || "").trim()
   if (!d2.text && description) flag("info", "default_description", "No usable description; the default description is used")
+  if (!description && base.seller) {
+    // User decision: no description at all -> just the seller tag (the same "#<seller>-<link end>" every listing gets).
+    description = descriptionTag(base.seller, base.link)
+    flag("info", "seller_tag_description", `No description on the page: "${description}" is used`)
+  }
 
   const left = [...findViolations(title, deps.terms), ...findViolations(description, deps.terms)]
   if (left.length) flag("error", "violation", `Still contains: ${[...new Set(left.map(v => v.text))].join(", ")}`)
@@ -206,7 +239,9 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   if (title.length > 255) { title = title.slice(0, 255).trim(); flag("warn", "title_cut", "Title was cut to 255 characters") }
   if (!description) flag("error", "description", "No description and no default description")
   if (description.length > 1900) { description = description.slice(0, 1900).trim(); flag("warn", "description_cut", "Description was shortened") }
-  if (!base.images.length) flag("error", "no_images", "No images found; GameBoost needs at least one")
+  if (!base.images.length) {
+    flag("error", "no_images", base.game ? `No images: set a default image for ${base.game.name} (asked once per game) or add image links` : "No images found; GameBoost needs at least one")
+  }
 
   /* 7. price */
   const price = resolvePrice(base.priceInput, src.price !== undefined ? String(src.price) : undefined)
