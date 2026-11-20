@@ -10,7 +10,7 @@ import NavBar from "../navBar"
 import { EMPLOYEES } from "@/lib/employees"
 import { revalidate, toPublishItem, type ReviewRow } from "@/lib/auto/review"
 import {
-  actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, repeatedRows, rowProblem, rowsFromPaste, rowsToPrepare,
+  actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, rowProblem, rowsFromPaste, rowsToPrepare,
   selectAll, selectCreated, selectReady, type InputRow, type ResultRow,
 } from "@/lib/auto/rows"
 import { diffWords, titleChanged } from "@/lib/auto/diff"
@@ -133,7 +133,6 @@ export default function AutoClient() {
   }
 
   /* ---- step 1: input rows ---- */
-  const repeated = useMemo(() => repeatedRows(inputs), [inputs])
   const toPrepare = useMemo(() => rowsToPrepare(inputs, settings.seller), [inputs, settings.seller])
   const filled = inputs.filter(r => r.link.trim()).length
   const setInput = (id: string, patch: Partial<InputRow>) => setInputs(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
@@ -258,7 +257,7 @@ export default function AutoClient() {
         })
         const byRef = new Map(data.results.map(r => [r.ref, r]))
         created += data.results.filter(r => r.status === "created").length
-        updateRows(prev => prev.map(r => (byRef.has(r.canonicalId) ? { ...r, result: byRef.get(r.canonicalId) } : r)))
+        updateRows(prev => prev.map(r => (byRef.has(r.key) ? { ...r, result: byRef.get(r.key) } : r)))
         setBusy({ what: "Publishing", done: Math.min(list.length, i + chunk.length), total: list.length })
       }
       setNotice(`${created} offer(s) ${settings.listNow ? "listed" : "created as drafts"} on GameBoost.`)
@@ -363,7 +362,7 @@ export default function AutoClient() {
                 <span>#</span><span>FunPay offer link</span><span>Price (or x2)</span><span />
               </div>
               {inputs.map((r, i) => {
-                const problem = repeated.has(r.id) ? "same offer as a row above (skipped)" : rowProblem(r)
+                const problem = rowProblem(r)
                 return (
                   <div key={r.id} className={`grid grid-cols-[2rem_1fr] gap-2 rounded-lg border bg-neutral-900 p-2 sm:grid-cols-[2rem_1fr_9rem_2rem] ${problem ? "border-yellow-600" : "border-neutral-700"}`}>
                     <span className="pt-2 text-xs text-neutral-500">{i + 1}</span>
@@ -383,7 +382,7 @@ export default function AutoClient() {
                 Prepare {toPrepare.length || ""} offer{toPrepare.length === 1 ? "" : "s"}
               </Button>
               <span className="text-xs text-neutral-400">
-                Reads each FunPay page, removes banned words / contacts / ads from the title and description, checks duplicates (by title), fills the game details.
+                Reads each FunPay page, removes banned words / contacts / ads / seller talk from the title and description, checks duplicates by the original title, fills the game details.
                 {filled > toPrepare.length && settings.seller ? ` ${filled - toPrepare.length} row(s) skipped (see warnings).` : ""}
               </span>
               <button type="button" className="ml-auto text-xs text-neutral-400 underline" onClick={() => setInputs(Array.from({ length: 5 }, () => newRow()))}>Clear rows</button>

@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
-  actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, repeatedRows, rowProblem, rowsFromPaste, rowsToPrepare,
+  actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, rowProblem, rowsFromPaste, rowsToPrepare,
   selectAll, selectCreated, selectReady, type ResultRow,
 } from "../lib/auto/rows"
 
@@ -20,7 +20,7 @@ test("input rows: link + price (number or multiplier); rows without a link are u
   assert.equal(rowProblem(newRow({ link: L("81847225"), price: "ten" })), "price must be a number or a multiplier like x2")
 })
 
-test("input rows: one seller for the whole batch; same offer twice -> second row marked; nothing without a seller", () => {
+test("input rows: one seller for the whole batch; the same link twice is NOT blocked (titles decide); nothing without a seller", () => {
   const rows = [
     newRow({ link: L("111222"), price: "10" }),
     newRow({ link: "https://funpay.com/ru/lots/offer?id=111222", price: "20" }),
@@ -28,11 +28,13 @@ test("input rows: one seller for the whole batch; same offer twice -> second row
     newRow({ link: L("555666"), price: "" }),
     newRow(),
   ]
-  assert.deepEqual([...repeatedRows(rows)], [rows[1].id])
-  assert.deepEqual(rowsToPrepare(rows, "GS"), [
-    { key: "funpay:111222", link: L("111222"), price: "10", seller: "GS" },
-    { key: "funpay:333444", link: L("333444"), price: "x2", seller: "GS" },
+  const out = rowsToPrepare(rows, "GS")
+  assert.deepEqual(out.map(r => [r.link, r.price, r.seller]), [
+    [L("111222"), "10", "GS"],
+    ["https://funpay.com/ru/lots/offer?id=111222", "20", "GS"],
+    [L("333444"), "x2", "GS"],
   ])
+  assert.deepEqual(out.map(r => r.key), [rows[0].id, rows[1].id, rows[2].id], "each row keeps its own key")
   assert.deepEqual(rowsToPrepare(rows, ""), [], "no seller chosen -> nothing to prepare")
 })
 

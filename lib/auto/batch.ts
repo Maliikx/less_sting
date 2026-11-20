@@ -1,4 +1,3 @@
-import { canonicalIdOf } from "../sources/index"
 import { titleKey } from "../text"
 import { prepareOffer, type PrepareDeps, type PrepareInput, type PreparedOffer } from "../pipeline/prepare"
 
@@ -34,8 +33,8 @@ export function startGate(gap: number, sleep: (ms: number) => Promise<void>, now
 }
 
 /**
- * Prepare a batch: duplicates by TITLE (sheet + earlier in this batch), the same link twice is stopped before
- * any read, page reads start >= 1.5 s apart, up to 3 offers in flight. Results keep the input order.
+ * Prepare a batch: duplicates by TITLE only (sheet + earlier in this batch; user decision, so the same link twice is
+ * read twice and caught by its title), page reads start >= 1.5 s apart, up to 3 offers in flight. Results keep the input order.
  */
 export async function prepareBatch(items: PrepareInput[], deps: BatchDeps): Promise<PreparedOffer[]> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
@@ -44,16 +43,6 @@ export async function prepareBatch(items: PrepareInput[], deps: BatchDeps): Prom
     await gate()
     return deps.readOffer(link)
   }
-
-  // Same offer twice (same lot id): only the first is read.
-  const seenIds = new Set<string>()
-  const repeat = items.map(it => {
-    const id = canonicalIdOf(it.link)
-    if (!id) return null
-    if (seenIds.has(id)) return "the same offer is earlier in this batch"
-    seenIds.add(id)
-    return null
-  })
 
   // Titles listed earlier in THIS batch (first come, first served).
   const batchTitles = new Map<string, number>()
@@ -77,7 +66,6 @@ export async function prepareBatch(items: PrepareInput[], deps: BatchDeps): Prom
       out[i] = await prepareOffer(items[i], {
         ...deps,
         readOffer,
-        isDuplicate: () => repeat[i],
         isDuplicateTitle: t => listedTitle(t, i),
       })
     }

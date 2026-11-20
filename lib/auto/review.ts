@@ -42,10 +42,11 @@ export function revalidate(row: ReviewRow): ReviewRow {
 
 export const canPublish = (row: ReviewRow) => row.status === "ready" && !!row.game
 
-export function toPublishItem(row: ReviewRow): PublishItem {
+/** `key` = the row's own id in the batch (unique even when two rows have the same link). */
+export function toPublishItem(row: ReviewRow & { key?: string }): PublishItem {
   if (!row.game) throw new Error("no game")
   return {
-    ref: row.canonicalId,
+    ref: row.key || row.canonicalId,
     link: row.link,
     seller: row.seller,
     title: row.title,

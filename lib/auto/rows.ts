@@ -24,26 +24,16 @@ export function rowProblem(r: InputRow): string | null {
   return null
 }
 
-/** Row ids whose link is the same offer as an earlier row (same lot id). */
-export function repeatedRows(rows: InputRow[]): Set<string> {
-  const seen = new Set<string>()
-  const out = new Set<string>()
-  for (const r of rows) {
-    const id = canonicalIdOf(r.link)
-    if (!id) continue
-    if (seen.has(id)) out.add(r.id)
-    seen.add(id)
-  }
-  return out
-}
-
-/** Rows ready to send to Prepare (valid, first per lot id), all for the batch's seller. None without a seller. */
+/**
+ * Rows ready to send to Prepare (valid), all for the batch's seller. None without a seller.
+ * The same link twice is NOT blocked here (user decision: duplicates are judged by title only, during Prepare).
+ * The key is the row id, so two rows with the same link stay two rows.
+ */
 export function rowsToPrepare(rows: InputRow[], seller: string) {
   if (!seller) return []
-  const rep = repeatedRows(rows)
   return rows
-    .filter(r => r.link.trim() && !rep.has(r.id) && !rowProblem(r))
-    .map(r => ({ key: canonicalIdOf(r.link)!, link: r.link.trim(), price: r.price.trim().replace(",", "."), seller }))
+    .filter(r => r.link.trim() && !rowProblem(r))
+    .map(r => ({ key: r.id, link: r.link.trim(), price: r.price.trim().replace(",", "."), seller }))
 }
 
 /**

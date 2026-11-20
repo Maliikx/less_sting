@@ -79,26 +79,87 @@ export type PreparedOffer = {
 
 const MAX_IMAGES = 10
 
-/** Cheap field filling from FunPay's own label/value pairs ("Rank: Gold"). No AI needed. */
+/* ------------------------------------------------------------ FunPay parameters -> GameBoost fields (no AI) */
+
+const nrm = (s: string) => String(s).toLowerCase().replace(/[_\-\s]+/g, " ").replace(/[^\p{L}\p{N} ]/gu, "").trim()
+const stem = (w: string) => w.replace(/(?:ing|ed|es|s)$/, "") || w
+/** Words that carry no subject ("email" is a subject; "not", "type", "account" are not). */
+const NO_SUBJECT = new Set(["not", "no", "un", "is", "the", "of", "a", "type", "account", "acc", "status", "has", "have", "with"])
+const subjectTokens = (s: string) => new Set(nrm(s).split(" ").map(stem).filter(w => w && !NO_SUBJECT.has(w)))
+
+/** The FunPay parameter label for a GameBoost field key: same name, or the same subject words ("Email linking" ~ email_not_linked). */
+export function paramLabelFor(key: string, params: Record<string, string>): string | undefined {
+  const exact = Object.keys(params).find(k => nrm(k) === nrm(key))
+  if (exact) return exact
+  const kt = subjectTokens(key)
+  if (!kt.size) return undefined
+  const hits = Object.keys(params).filter(label => {
+    const lt = subjectTokens(label)
+    if (!lt.size) return false
+    const shared = [...kt].filter(t => lt.has(t)).length
+    return shared > 0 && (shared === kt.size || shared === lt.size)
+  })
+  return hits.length === 1 ? hits[0] : undefined // ambiguous -> no guess
+}
+
+const NEG = /(?:^|\s)(?:not|no|non|un|without|never|нет|не|без)(?:\s|$)|unlinked|unbound|отвяз|не привяз/i
+const POS = /(?:^|\s)(?:yes|true|linked|bound|attached|verified|есть|да|привязан\p{L}*)(?:\s|$)/iu
+/** +1 / -1 / 0 for a yes/no-ish value ("Email linked" +1, "Not linked" -1, "Europe" 0). */
+export function polarity(value: string): 1 | -1 | 0 {
+  const v = ` ${nrm(value)} `
+  if (NEG.test(v)) return -1
+  if (POS.test(v)) return 1
+  return 0
+}
+/** A field whose NAME asks a negative question: email_not_linked, no_phone, unlinked_... */
+const negativeKey = (key: string) => /(?:^|_)(?:not|no|non|un|without)(?:_|$)|unlinked|unbound/i.test(key)
+const ANY = /(?:^|\s)(?:any|all|every|cross|multi|both|любая|любой|все|кросс)(?:\s|$)/i
+const UNKNOWN_OPT = /^(?:unknown|other|none|n\/a|-)$/i
+
+/**
+ * Fill fields from FunPay's own label/value pairs ("Rank: Gold", "Email linking: Email linked", "Platform: Any platform").
+ * Rules only, no AI; anything unclear is left empty (then AI, then lowest value + flag).
+ */
 export function fieldsFromParams(specs: FieldSpec[], params: Record<string, string>): Record<string, unknown> {
-  const n = (s: string) => String(s).toLowerCase().replace(/[_\-\s]+/g, " ").replace(/[^\p{L}\p{N} ]/gu, "").trim()
   const out: Record<string, unknown> = {}
   for (const s of specs) {
-    const label = Object.keys(params).find(k => n(k) === n(s.key))
+    const label = paramLabelFor(s.key, params)
     if (!label) continue
     const raw = params[label]
-    if (s.options?.length) {
-      const hit = s.options.find(o => n(o) === n(raw)) ?? s.options.find(o => n(raw).includes(n(o)))
+    const pol = polarity(raw)
+    // yes/no question: the answer flips when the field name is negative (email_not_linked + "Email linked" -> No)
+    const answer = pol === 0 ? null : (pol === 1) !== negativeKey(s.key)
+    const opts = s.options || []
+
+    if (s.type === "boolean") {
+      if (answer !== null) out[s.key] = answer
+      continue
+    }
+    if (opts.length) {
+      const yesNo = opts.filter(o => /^(?:yes|true|no|false|да|нет)$/i.test(o.trim()))
+      let hit: string | undefined
+      if (yesNo.length && answer !== null) hit = yesNo.find(o => /^(?:yes|true|да)$/i.test(o.trim()) === answer)
+      if (!hit) hit = opts.find(o => nrm(o) === nrm(raw)) ?? opts.find(o => !UNKNOWN_OPT.test(o) && nrm(raw).includes(nrm(o)))
+      if (!hit && pol !== 0 && !yesNo.length) hit = opts.find(o => !UNKNOWN_OPT.test(o) && polarity(o) === pol)
+      if (!hit && ANY.test(` ${nrm(raw)} `)) {
+        const real = opts.filter(o => !UNKNOWN_OPT.test(o))
+        const anyOpt = real.find(o => ANY.test(` ${nrm(o)} `))
+        if (anyOpt) hit = anyOpt
+        else if (s.type === "array" && real.length) { out[s.key] = real; continue } // "Any platform" = every platform
+      }
       if (hit) out[s.key] = s.type === "array" ? [hit] : hit
     } else if (s.type === "integer" || s.type === "number") {
       const m = raw.replace(/[\s,]/g, "").match(/-?\d+(?:\.\d+)?/)
       if (m) out[s.key] = s.type === "integer" ? Math.round(Number(m[0])) : Number(m[0])
     } else if (s.type === "string") {
-      out[s.key] = raw
+      out[s.key] = answer !== null && negativeKey(s.key) ? (answer ? "Yes" : "No") : raw
     }
   }
   return out
 }
+
+/** First-person seller talk left after the rules ("I ask you to...", "my store", "we deliver"). */
+const SELLER_VOICE = /(?<![\p{L}\p{N}'’])(?:i|i'm|i’m|i am|me|my|mine|we|we're|our)(?![\p{L}\p{N}'’])/iu
 
 export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Promise<PreparedOffer> {
   const base: PreparedOffer = {
@@ -172,8 +233,9 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   if (src.currency && src.currency !== "EUR") flag("info", "currency", `Source price is in ${src.currency}; used as-is (no conversion)`)
 
   /* 3. rules: remove banned terms, contacts, ad sentences */
-  const t = cleanText(src.title || "", "title", deps.terms)
-  const d = cleanText(src.description || "", "description", deps.terms)
+  const cleanOpts = { names: src.sellerName ? [src.sellerName] : [] }
+  const t = cleanText(src.title || "", "title", deps.terms, cleanOpts)
+  const d = cleanText(src.description || "", "description", deps.terms, cleanOpts)
   base.removed.push(...t.removed, ...d.removed)
   let title = t.text
   let description = d.text
@@ -196,7 +258,9 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   /* 5. AI only when needed: Russian text, or fields still missing */
   const translate = needsTranslation(`${title} ${description}`)
   const wanted = specs.filter(s => isEmptyValue(fields[s.key]) && (s.required || s.type !== "string" || s.options))
-  if (translate || wanted.length) {
+  // The rules can't judge sentences where the seller talks about themselves ("I", "my", "we"): let the AI clean those.
+  const sellerVoice = SELLER_VOICE.test(description)
+  if (translate || wanted.length || sellerVoice) {
     if (!deps.ai?.available) {
       if (translate) flag("error", "untranslated", "Text is not English and no AI provider is configured")
       else flag("info", "no_ai", "AI not configured: game fields are only read from the page parameters")
@@ -220,8 +284,8 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   }
 
   /* 6. final gate: rules again on the final text, then check nothing banned is left */
-  const t2 = cleanText(title, "title", deps.terms)
-  const d2 = cleanText(description, "description", deps.terms)
+  const t2 = cleanText(title, "title", deps.terms, cleanOpts)
+  const d2 = cleanText(description, "description", deps.terms, cleanOpts)
   base.removed.push(...t2.removed, ...d2.removed)
   title = fixTitle(t2.text)
   description = d2.text || (deps.defaultDescription || "").trim()

@@ -28,6 +28,8 @@ export type SourceOffer = {
   /** Game guessed from the category name ("PUBG Mobile"). */
   game?: string
 
+  /** The source seller's username (removed from the text with its sentence). */
+  sellerName?: string
   /** Full-size images uploaded to the offer page. */
   images: string[]
   /** Screenshot albums / videos the description links to (imgur, postimg, YouTube...). postimg/imgur albums are read when the offer has no FunPay images. */

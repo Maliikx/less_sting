@@ -69,9 +69,9 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   each row has only offer link + price (number or multiplier). Plus price for all, +10 rows, "paste many links" (`link [price]`).
   Settings next to the publish buttons (remembered per browser): delivery time + unit, default description, delivery instructions,
   "Create as draft" / "List immediately". The page shows 4 steps (offers, prepare = read + clean, review, publish).
-- Duplicates are checked by TITLE, not link (user decision): the page's original title and the cleaned title vs the sheet TITLE
-  column, and vs earlier offers in the batch. The page is read first (no AI is spent on duplicates). The same link twice in one batch
-  is still skipped before reading.
+- Duplicates are checked by TITLE ONLY (user decision): the page's original title and the cleaned title vs the sheet TITLE
+  column, and vs earlier offers in the batch. The page is read first (no AI is spent on duplicates). The same link twice is NOT
+  blocked: it is read again and caught by its title. Rows are keyed by their own row id (not the lot id).
 - No description at all -> the description is just the seller tag `#<seller>-<last 8 chars of the link>` (same tag POST /api/offers
   appends to every listing, so it appears once). User asked for "last 6 digits": switching the tag everywhere would change `/` too (asked).
 - The review table shows each cleaned title and, under it, the original with removed words struck through (`lib/auto/diff.ts`).
@@ -97,6 +97,17 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   so a timeout can leave offers on GameBoost with no sheet row. Fix: the page publishes 3 offers per request (maxDuration 300), and
   /api/auto/publish first looks each title up on GameBoost: if it already exists it is NOT created again and its missing sheet row
   is appended (NOTE "recovered after an interrupted publish"). So pressing Publish again after a timeout is safe.
+
+## Cleaning (rules first, then AI)
+- Rules (`lib/cleaning`): banned terms cut their clause; a sentence with contacts, links, seller advertising, SELLER POLICY
+  (auto-issued data, no returns/refunds, record a video, ask before buying, not responsible...) or a STORE INTRODUCTION
+  (hello/welcome/my shop/thank you for choosing...) is dropped whole; FAQ blocks (heading -> blank line) and Q:/A: lines are dropped;
+  any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
+- AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
+  seller talk (I/me/my/we/our). Its prompt lists what to remove and keeps account facts from removed sentences.
+- FunPay params -> GameBoost fields without AI (`fieldsFromParams`): labels match by subject words ("Email linking" ~
+  email_not_linked), negative field names flip yes/no ("Email linked" -> email_not_linked = No), "Any platform" -> all options of a
+  multi-choice field or an any/all/cross option; never a guess when two labels match. Checked on real offer 69446008 (Genshin).
 
 ## AI capacity (2026-11-19 estimate; limits change, check the Groq console)
 - One AI call ~1,300 tokens on real offers (range ~870-1,800). AI runs only when text is not English (rare: /en/ pages are translated)

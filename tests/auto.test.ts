@@ -56,7 +56,7 @@ function readerFor(pages: Record<string, SourceOffer>, log: string[]) {
   }
 }
 
-test("batch: duplicates are found by TITLE (original or cleaned) in the sheet and in this batch; the same link twice is not read", async () => {
+test("batch: duplicates are found by TITLE only (original or cleaned) in the sheet and in this batch; the same link twice is read and caught by title", async () => {
   const { titleKey } = await import("../lib/text")
   const log: string[] = []
   const a = parseReal("81847225") // "Blood Raven X-Suit | Glacier M416 Lv6 | OG S6 S7 S8 RP | S5 Hair"
@@ -69,16 +69,16 @@ test("batch: duplicates are found by TITLE (original or cleaned) in the sheet an
     [
       { link: L("81847225"), price: "x2", seller: "S1" },
       { link: L("81846982"), price: "10", seller: "S1" }, // title in the sheet
-      { link: L("81847225"), price: "x3", seller: "S1" }, // same link again
-      { link: L("81847074"), price: "40", seller: "S1" }, // same title as line 1
+      { link: L("81847225"), price: "x3", seller: "S1" }, // same link again -> same title as line 1
+      { link: L("81847074"), price: "40", seller: "S1" }, // other link, same title as line 1
       { link: L("62421214"), price: "40", seller: "S1" },
     ],
     { readOffer: readerFor(pages, log), ai: null, game: null, listedTitle: k => sheet.get(k) ?? null, sleep: async () => {}, concurrency: 1 }
   )
-  assert.deepEqual(log, ["81847225", "81846982", "81847074", "62421214"], "the repeated link is never read")
+  assert.deepEqual(log, ["81847225", "81846982", "81847225", "81847074", "62421214"], "the repeated link is read like any other")
   assert.deepEqual(out.map(o => o.status === "duplicate"), [false, true, true, true, true])
   assert.match(out[1].flags[0].message, /same title\): sheet row 12/)
-  assert.match(out[2].flags[0].message, /earlier in this batch/)
+  assert.match(out[2].flags[0].message, /same title as line 1/)
   assert.match(out[3].flags[0].message, /same title as line 1/)
   assert.match(out[4].flags[0].message, /sheet row 40/)
   assert.equal(out[1].aiUsed, false, "no AI spent on duplicates")
@@ -102,14 +102,14 @@ test("batch: page reads START at least 1.5 s apart even with 3 offers in flight;
       readOffer: async link => {
         readAt.push(Date.now())
         const id = new URL(link).searchParams.get("id")!
-        if (id === "81847225") await new Promise(r => setTimeout(r, 200)) // slow (like an AI call)
+        if (id === "81847225") await new Promise(r => setTimeout(r, 600)) // slow (like an AI call)
         return parseReal(id)
       },
-      ai: null, game: null, listedTitle: () => null, gapMs: 40, concurrency: 3,
+      ai: null, game: null, listedTitle: () => null, gapMs: 60, concurrency: 3,
     }
   )
-  for (let i = 1; i < readAt.length; i++) assert.ok(readAt[i] - readAt[i - 1] >= 38, `reads ${i - 1}->${i} were ${readAt[i] - readAt[i - 1]} ms apart`)
-  assert.ok(readAt[1] - t0 < 150, "the 2nd read did not wait for the slow 1st offer")
+  for (let i = 1; i < readAt.length; i++) assert.ok(readAt[i] - readAt[i - 1] >= 55, `reads ${i - 1}->${i} were ${readAt[i] - readAt[i - 1]} ms apart`)
+  assert.ok(readAt[1] - t0 < 450, "the 2nd read did not wait for the slow 1st offer (600 ms)")
   assert.deepEqual(out.map(o => o.canonicalId), ids.map(id => `funpay:${id}`))
 })
 
