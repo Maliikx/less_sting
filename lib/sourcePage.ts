@@ -255,10 +255,19 @@ export function priceSnippets(rawHtml: string) {
 
 /* ------------------------------------------------------------ main */
 
-export async function checkSource(link: string, opts: { debug?: boolean } = {}): Promise<SourceCheck & { debug?: string[] }> {
+export type PriceReader = (page: { status: number; html: string; finalUrl: URL }) => { price?: number; priceText?: string; warning?: string } | null
+
+/**
+ * `opts.price`: a site-specific price reader (e.g. the FunPay adapter). When it returns non-null, its result is used
+ * instead of the generic extractPrice (which can mix currencies). `opts.fetcher` is injectable for tests.
+ */
+export async function checkSource(
+  link: string,
+  opts: { debug?: boolean; price?: PriceReader; fetcher?: typeof fetchPage } = {}
+): Promise<SourceCheck & { debug?: string[] }> {
   let page
   try {
-    page = await fetchPage(link)
+    page = await (opts.fetcher ?? fetchPage)(link)
   } catch (e) {
     const msg = e instanceof Error ? (e.name === "TimeoutError" ? "The page took too long to open" : e.message) : String(e)
     return { status: "error", images: [], message: msg }
@@ -274,10 +283,12 @@ export async function checkSource(link: string, opts: { debug?: boolean } = {}):
   }
   if (status >= 400) return { status: "error", images: [], httpStatus: status, message: `The page returned HTTP ${status}` }
 
+  const special = opts.price?.(page)
+  const price = special ? { price: special.price, priceText: special.priceText, ...(special.warning ? { message: special.warning } : {}) } : extractPrice(html) || {}
   return {
     status: "ok",
     images: extractImages(html, finalUrl),
-    ...(extractPrice(html) || {}),
+    ...price,
     httpStatus: status,
     ...(opts.debug ? { debug: [`page length ${html.length}`, ...priceSnippets(html)] } : {}),
   }

@@ -1,5 +1,6 @@
 import { fetchPage } from "../sourcePage"
 import { funpay } from "./funpay"
+import { readAlbums } from "./media"
 import type { FetchedPage, SourceAdapter, SourceOffer } from "./types"
 
 export * from "./types"
@@ -41,7 +42,9 @@ export async function readSourceOfferWithPage(raw: string, fetcher: PageFetcher 
   }
   try {
     const page = await fetcher(a.adapter.canonicalUrl(a.url))
-    return { offer: a.adapter.parse(page), html: page.html }
+    const offer = a.adapter.parse(page)
+    await addAlbumImages(offer, fetcher)
+    return { offer, html: page.html }
   } catch (e) {
     const msg = e instanceof Error ? (e.name === "TimeoutError" ? "The page took too long to open" : e.message) : String(e)
     return { offer: { source: a.adapter.id, canonicalId: id, url: raw, status: "error", message: msg, params: {}, images: [], warnings: [] } }
@@ -51,4 +54,24 @@ export async function readSourceOfferWithPage(raw: string, fetcher: PageFetcher 
 /** Fetch + parse one offer. Never throws: network problems come back as status "error". */
 export async function readSourceOffer(raw: string, fetcher: PageFetcher = fetchPage): Promise<SourceOffer> {
   return (await readSourceOfferWithPage(raw, fetcher)).offer
+}
+
+/**
+ * No images on the source page but the description links an album: try to read it (decided with the user).
+ * The offer stays flagged either way (warning), so a human checks the pictures belong to this account.
+ */
+export async function addAlbumImages(offer: SourceOffer, fetcher: PageFetcher): Promise<void> {
+  if (offer.status !== "ok" || offer.images.length || !offer.externalMedia?.length) return
+  const results = await readAlbums(offer.externalMedia, { fetcher })
+  offer.albums = results.map(r => ({ link: r.link, kind: r.kind, status: r.status, images: r.images.length, unusable: r.unusable.length, note: r.note }))
+  const hit = results.find(r => r.images.length)
+  if (hit) {
+    offer.images = hit.images
+    offer.imagesFrom = hit.link
+    offer.warnings.push(`images taken from the linked album ${hit.link}; check they show this account`)
+    return
+  }
+  const imgur = results.find(r => r.unusable.length)
+  if (imgur) offer.warnings.push(`the imgur album has ${imgur.unusable.length} image(s), but GameBoost does not accept imgur; add images by hand`)
+  else if (results.some(r => r.status === "error")) offer.warnings.push("could not read the linked album")
 }
