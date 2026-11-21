@@ -34,6 +34,8 @@ export type PublishSettings = {
   defaultDescription?: string
   /** Shown to the buyer after purchase (NOT encrypted: never credentials). */
   deliveryInstructions?: string
+  /** Text sent as the offer's credentials (manual delivery message), already filled in. Empty = the server's placeholder. */
+  credentials?: string
 }
 
 export type PublishResult = {

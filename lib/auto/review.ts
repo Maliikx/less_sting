@@ -1,6 +1,7 @@
 import { findViolations } from "../cleaning/clean"
 import { listingProblems, resolvePrice } from "../offerRules"
 import type { Flag, PreparedOffer } from "../pipeline/prepare"
+import { IMGUR_MESSAGE } from "./messages"
 import type { PublishItem } from "../destinations/types"
 
 /**
@@ -11,14 +12,17 @@ import type { PublishItem } from "../destinations/types"
 
 export type ReviewRow = PreparedOffer
 
-const FIXABLE = new Set(["no_images", "title", "price", "violation", "description", "game_unknown", "images"])
+const FIXABLE = new Set(["no_images", "imgur_images", "title", "price", "violation", "description", "game_unknown", "images"])
 
 export function revalidate(row: ReviewRow): ReviewRow {
   if (row.status === "dead" || row.status === "duplicate" || row.status === "blocked" || row.status === "error") return row
   const flags: Flag[] = row.flags.filter(f => !FIXABLE.has(f.code))
   const add = (code: string, message: string) => flags.push({ level: "error", code, message })
 
-  if (!row.images.length) add("no_images", "No images: add at least one image link")
+  if (!row.images.length) {
+    if (row.imgurImages) add("imgur_images", IMGUR_MESSAGE)
+    else add("no_images", "No images: add at least one image link")
+  }
   else {
     const p = listingProblems({ imageUrls: row.images })
     if (p.length) add("images", p.join("; "))

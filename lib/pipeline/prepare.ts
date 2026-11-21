@@ -5,6 +5,7 @@ import { AiUnavailableError, type AiClient } from "../ai/provider"
 import { applyDefaults, isEmptyValue, type Defaulted, type FieldSpec } from "../gameFields"
 import { descriptionTag, fixTitle, resolvePrice } from "../offerRules"
 import { canonicalIdOf } from "../sources/index"
+import { IMGUR_MESSAGE } from "../auto/messages"
 import type { SourceOffer } from "../sources/types"
 
 /**
@@ -62,6 +63,8 @@ export type PreparedOffer = {
   albumImages?: boolean
   /** True when the only image is the game's default image (the offer had none). */
   defaultImage?: boolean
+  /** True when the offer's screenshots exist but only on imgur (GameBoost refuses imgur): flag `imgur_images`, not `no_images`. */
+  imgurImages?: boolean
   sourcePrice?: number
   priceText?: string
   priceEur?: number
@@ -220,7 +223,10 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   }
   base.game = game?.gameId && game.gameSlug ? { id: game.gameId, slug: game.gameSlug, name: game.gameName || game.gameSlug } : deps.gameFor ? null : undefined
   base.images = src.images.filter(u => !/(^|\.)imgur\.com/i.test(safeHost(u))).slice(0, MAX_IMAGES)
-  if (!base.images.length && base.game) {
+  // Screenshots exist, but only on imgur: a different problem from "no images" (they can be re-uploaded), so no default image.
+  base.imgurImages =
+    !base.images.length && (src.images.some(u => /(^|\.)imgur\.com/i.test(safeHost(u))) || !!src.albums?.some(a => a.kind === "imgur" && a.unusable > 0))
+  if (!base.images.length && base.game && !base.imgurImages) {
     const url = deps.defaultImageFor?.(base.game.id)
     if (url) {
       base.images = [url]
@@ -303,7 +309,9 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   if (title.length > 255) { title = title.slice(0, 255).trim(); flag("warn", "title_cut", "Title was cut to 255 characters") }
   if (!description) flag("error", "description", "No description and no default description")
   if (description.length > 1900) { description = description.slice(0, 1900).trim(); flag("warn", "description_cut", "Description was shortened") }
-  if (!base.images.length) {
+  if (!base.images.length && base.imgurImages) {
+    flag("error", "imgur_images", IMGUR_MESSAGE)
+  } else if (!base.images.length) {
     flag("error", "no_images", base.game ? `No images: set a default image for ${base.game.name} (asked once per game) or add image links` : "No images found; GameBoost needs at least one")
   }
 

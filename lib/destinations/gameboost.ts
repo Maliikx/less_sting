@@ -40,6 +40,7 @@ export function buildOffersRequests(items: PublishItem[], s: PublishSettings) {
         description: it.description,
         accountData: JSON.stringify(it.accountData),
         note: sheetNote(it),
+        credentials: s.credentials || undefined,
       })),
       gameboost: {
         enabled: true,

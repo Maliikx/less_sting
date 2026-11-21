@@ -1,5 +1,6 @@
 import { findViolations } from "../cleaning/clean"
 import { descriptionTag, listingProblems } from "../offerRules"
+import { CREDENTIALS_MAX, DEFAULT_CREDENTIALS_TEMPLATE, renderCredentials } from "./credentials"
 import type { PublishItem, PublishSettings } from "../destinations/types"
 
 export const PUBLISH_MAX_ITEMS = 20
@@ -22,8 +23,12 @@ export function parsePublishRequest(body: unknown): { error: string } | { items:
   if (!(UNITS as readonly string[]).includes(unit)) return { error: "Delivery unit must be minutes, hours or days" }
   const instructions = typeof s.deliveryInstructions === "string" ? s.deliveryInstructions.trim() : ""
   if (instructions.length > 2048) return { error: "Delivery instructions: max 2048 characters" }
+  const template = typeof s.credentialsTemplate === "string" ? s.credentialsTemplate : DEFAULT_CREDENTIALS_TEMPLATE
+  const credentials = renderCredentials(template, duration, unit as PublishSettings["deliveryUnit"])
+  if (credentials.length > CREDENTIALS_MAX) return { error: `Credentials message: max ${CREDENTIALS_MAX} characters` }
   const settings: PublishSettings = {
     listNow: s.listNow === true,
+    credentials: credentials || undefined,
     deliveryInstructions: instructions || undefined,
     deliveryDuration: duration,
     deliveryUnit: unit as PublishSettings["deliveryUnit"],

@@ -93,6 +93,11 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
 - Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
+- Credentials (manual delivery message the buyer receives) = an editable template on /auto, default
+  "thank you for your purchase\n\ndelivery takes anywhere from 5 min up to [delivery time] ❤️"; `[delivery time]` is filled on the
+  server from the delivery setting ("1 hour", "2 days"); max 500 chars (`lib/auto/credentials.ts`).
+- Screenshots only on imgur -> its own flag `imgur_images` (red "imgur" badge + notice), NOT `no_images`, and the game's default
+  image is NOT used for them (real screenshots exist; the employee adds other image links).
 - Publishing 20 offers in one request hit Vercel's time limit (HTTP 504). POST /api/offers writes the sheet only AFTER all creates,
   so a timeout can leave offers on GameBoost with no sheet row. Fix: the page publishes 3 offers per request (maxDuration 300), and
   /api/auto/publish first looks each title up on GameBoost: if it already exists it is NOT created again and its missing sheet row

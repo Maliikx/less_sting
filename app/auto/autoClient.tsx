@@ -16,6 +16,7 @@ import {
 import { diffWords, titleChanged } from "@/lib/auto/diff"
 import { defaultImageProblem } from "@/lib/auto/defaultImages"
 import { descriptionTag } from "@/lib/offerRules"
+import { CREDENTIALS_MAX, DEFAULT_CREDENTIALS_TEMPLATE, formatDelivery, renderCredentials } from "@/lib/auto/credentials"
 import type { PublishResult } from "@/lib/destinations/types"
 import type { GameRef } from "@/lib/auto/games"
 
@@ -30,9 +31,14 @@ type Settings = {
   deliveryUnit: "minutes" | "hours" | "days"
   defaultDescription: string
   deliveryInstructions: string
+  /** Credentials message template; [delivery time] is filled from the delivery time. */
+  credentialsTemplate: string
   listNow: boolean
 }
-const DEFAULT_SETTINGS: Settings = { seller: "", deliveryDuration: "1", deliveryUnit: "hours", defaultDescription: "", deliveryInstructions: "", listNow: false }
+const DEFAULT_SETTINGS: Settings = {
+  seller: "", deliveryDuration: "1", deliveryUnit: "hours", defaultDescription: "", deliveryInstructions: "",
+  credentialsTemplate: DEFAULT_CREDENTIALS_TEMPLATE, listNow: false,
+}
 const SETTINGS_KEY = "ls-auto-settings-v3"
 
 const STATUS: Record<string, { label: string; cls: string; help: string }> = {
@@ -211,7 +217,7 @@ export default function AutoClient() {
   const noImages = useMemo(() => {
     const m = new Map<number, { game: NonNullable<ResultRow["game"]>; keys: string[] }>()
     for (const r of rows) {
-      if (r.result || !r.game || r.images.length || r.status === "duplicate" || r.status === "dead") continue
+      if (r.result || !r.game || r.images.length || r.imgurImages || r.status === "duplicate" || r.status === "dead") continue
       const g = m.get(r.game.id) || { game: r.game, keys: [] }
       g.keys.push(r.key)
       m.set(r.game.id, g)
@@ -253,6 +259,7 @@ export default function AutoClient() {
             deliveryUnit: settings.deliveryUnit,
             defaultDescription: settings.defaultDescription || undefined,
             deliveryInstructions: settings.deliveryInstructions || undefined,
+            credentialsTemplate: settings.credentialsTemplate,
           },
         })
         const byRef = new Map(data.results.map(r => [r.ref, r]))
@@ -314,6 +321,8 @@ export default function AutoClient() {
   const allTicked = selectable.length > 0 && selectable.every(r => selected.has(r.key))
   const toggle = (key: string, on: boolean) => setSelected(s => { const n = new Set(s); if (on) n.add(key); else n.delete(key); return n })
   const step = rows.some(r => r.result) ? 4 : rows.length ? 3 : busy ? 2 : 1
+  const imgurCount = rows.filter(r => !r.result && r.imgurImages && !r.images.length).length
+  const credentialsPreview = renderCredentials(settings.credentialsTemplate, Number(settings.deliveryDuration) || 1, settings.deliveryUnit)
   const cleanedCount = rows.filter(r => r.original.title && titleChanged(r.original.title, r.title)).length
 
   return (
@@ -412,6 +421,13 @@ export default function AutoClient() {
             </div>
           )}
 
+          {imgurCount > 0 && (
+            <div className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm">
+              <p className="font-semibold">Screenshots only on imgur <span className="font-normal text-neutral-300">({imgurCount} offer{imgurCount === 1 ? "" : "s"}, red &quot;imgur&quot; badge)</span></p>
+              <p className="text-xs text-neutral-300">GameBoost does not accept imgur links. These offers DO have screenshots: open the row, download them from the imgur link in the description and add other image links (e.g. postimg). The default image is not used for them.</p>
+            </div>
+          )}
+
           {/* ================= 3. review  +  4. publish ================= */}
           {rows.length > 0 && (
             <div className="space-y-3 rounded-lg border border-neutral-600 bg-neutral-900 p-3">
@@ -439,7 +455,7 @@ export default function AutoClient() {
                       </button>
                     ))}
                   </div>
-                  <span className="text-neutral-300">delivery {settings.deliveryDuration} {settings.deliveryUnit} · seller {settings.seller || "—"}</span>
+                  <span className="text-neutral-300">delivery {formatDelivery(Number(settings.deliveryDuration) || 1, settings.deliveryUnit)} · seller {settings.seller || "—"}</span>
                   <button type="button" className="underline" onClick={() => setShowSettings(v => !v)}>{showSettings ? "hide settings" : "change settings"}</button>
                 </div>
                 {showSettings && (
@@ -452,6 +468,12 @@ export default function AutoClient() {
                       </Select>
                     </label>
                     <Input className={`${inputCls} h-8`} placeholder={`Default description (empty = just the seller tag, e.g. ${descriptionTag(settings.seller || "M", "81847225")})`} value={settings.defaultDescription} onChange={e => saveSettings({ defaultDescription: e.target.value })} />
+                    <label className="md:col-span-2">Credentials message <span className="text-neutral-400">(sent to the buyer as the account data; <code>[delivery time]</code> = the delivery time above)</span>
+                      <Textarea className={inputCls} rows={3} value={settings.credentialsTemplate} onChange={e => saveSettings({ credentialsTemplate: e.target.value })} />
+                      <span className="mt-1 block whitespace-pre-wrap rounded bg-neutral-900 p-2 text-neutral-300">Buyer sees: {credentialsPreview || "(empty: the server's default text is used)"}</span>
+                      {credentialsPreview.length > CREDENTIALS_MAX && <span className="text-red-300">Too long: max {CREDENTIALS_MAX} characters</span>}
+                      <button type="button" className="text-neutral-400 underline" onClick={() => saveSettings({ credentialsTemplate: DEFAULT_CREDENTIALS_TEMPLATE })}>reset to default</button>
+                    </label>
                     <label className="md:col-span-2">Delivery instructions <span className="text-neutral-400">(shown to the buyer after purchase; NOT encrypted, never passwords)</span>
                       <Textarea className={inputCls} rows={2} value={settings.deliveryInstructions} onChange={e => saveSettings({ deliveryInstructions: e.target.value })} />
                     </label>
@@ -509,6 +531,7 @@ export default function AutoClient() {
                               {r.images.length}
                               {r.albumImages && <div><span className="rounded bg-yellow-800 px-1">album</span></div>}
                               {r.defaultImage && <div><span className="rounded bg-yellow-800 px-1">default</span></div>}
+                              {r.imgurImages && !r.images.length && <div><span className="rounded bg-red-700 px-1 font-semibold" title="Screenshots only on imgur (not accepted by GameBoost)">imgur</span></div>}
                             </td>
                             <td className="truncate p-1.5">{r.game?.name || (r.category ? <span className="text-yellow-300">? {r.category}</span> : "")}</td>
                             <td className="p-1.5">
