@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import NavBar from "../navBar"
+import ProgressToast, { ProgressToastStack } from "@/components/progressToast"
 import { EMPLOYEES } from "@/lib/employees"
 import { revalidate, toPublishItem, type ReviewRow } from "@/lib/auto/review"
 import {
@@ -399,10 +400,9 @@ export default function AutoClient() {
           </div>
 
           {busy && (
-            <div>
-              <div className="h-2 w-full rounded bg-neutral-600"><div className="h-2 rounded bg-green-500 transition-all" style={{ width: `${(100 * busy.done) / Math.max(1, busy.total)}%` }} /></div>
-              <p className="mt-1 text-xs text-neutral-300">{busy.what}… {busy.done} / {busy.total}</p>
-            </div>
+            <ProgressToastStack>
+              <ProgressToast label={busy.what} done={busy.done} total={busy.total} color={busy.what === "Deleting" ? "bg-red-500" : busy.what === "Publishing" ? "bg-sky-500" : "bg-green-500"} />
+            </ProgressToastStack>
           )}
           {error && <p className="rounded bg-red-950/60 p-2 text-sm text-red-200">{error}</p>}
           {notice && <p className="rounded bg-sky-950/60 p-2 text-sm text-sky-200">{notice}</p>}

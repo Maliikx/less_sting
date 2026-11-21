@@ -88,8 +88,11 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   re-check), `POST /api/auto/publish` -> `lib/destinations` (DestinationAdapter; GameBoost adapter calls the EXISTING
   `POST /api/offers` handler in-process, one request per seller+game). Server re-checks images + banned words before publishing.
 - TESTING PHASE: the page defaults to "Create as draft"; the user can switch to "List immediately" (server only lists on a literal
-  `listNow: true`). The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
+  `listNow: true`). Steps 0-4 were merged to `main` and are LIVE on less-sting.vercel.app (2026-11-21). New work: a branch + PR,
+  tested on its Vercel preview, merged only when the user says so. Previews should use a COPY of the sheet (Preview-only
   `GOOGLE_SHEET_ID`) so test publishes don't land in the real Sheet1.
+- Long actions (prepare/publish on /auto, /probe, the /manage link check and bulk actions) show a floating progress toast
+  (`components/progressToast.tsx`, bottom-right, visible while scrolling).
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
 - Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
