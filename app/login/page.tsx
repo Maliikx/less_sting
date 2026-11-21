@@ -21,7 +21,9 @@ export default function LoginPage() {
     if (res.ok) {
       window.location.href = "/" // go to app
     } else {
-      setError("Wrong password")
+      // Show the server's real reason (wrong password vs. server not configured)
+      const data = await res.json().catch(() => null)
+      setError(data?.error || `Login failed (error ${res.status})`)
     }
   }
 
