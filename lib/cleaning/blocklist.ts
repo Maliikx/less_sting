@@ -17,6 +17,8 @@ export const TERM_GROUPS: Group[] = [
     terms: [
       "instant", "instantly", "instant deliver*", "instantly deliver*", "immediate deliver*", "immediately deliver*",
       "auto deliver*", "autodeliver*", "automatic deliver*", "automatically deliver*", "auto issue*", "auto delivery system",
+      "issued automatically", "automatically issued", "auto issued", "automatic issu*", "delivered automatically", "sent automatically",
+      "automatic sending", "auto send*", "выда* автоматически", "автоматически выда*", "автоматическ* отправк*",
       "мгновенн*", "моментальн*", "автовыдач*", "авто выдач*", "автоматическ* выдач*", "автодоставк*", "автоматическ* доставк*",
     ],
   },
@@ -45,14 +47,49 @@ export const TERM_GROUPS: Group[] = [
   {
     reason: "refund/replacement",
     terms: [
-      "refund*", "money-back", "replacement*", "return policy",
+      "refund*", "money-back", "replacement*", "return policy", "no return*", "no money back", "returns", "chargeback*",
       "возврат*", "верн* деньги", "верну деньги", "замен*",
     ],
   },
 ]
 
-/** A sentence containing any of these is dropped completely (contact details, seller advertising). */
+/** A sentence containing any of these is dropped completely (contact details, seller advertising, seller policy). */
 export const SENTENCE_PATTERNS: { reason: string; re: RegExp }[] = [
+  {
+    // The seller's own sales policy / instructions to buyers (not facts about the account).
+    reason: "seller policy",
+    re: new RegExp(
+      "(?<![\\p{L}\\p{N}])(?:" +
+        [
+          "(?:make|record|film|take)\\s+(?:a\\s+)?(?:video|recording)", "video\\s*record\\p{L}*", "screen\\s*record\\p{L}*",
+          "(?:no|not|without|never)\\s+(?:a\\s+)?returns?", "there will be no (?:return|refund|compensation)\\p{L}*",
+          "(?:is|are|will be)\\s+(?:issued|delivered|sent)\\s+automatically", "(?:data|account|login|credentials?)\\s+(?:is|are)\\s+issued",
+          "before\\s+(?:purchas|buy|order)\\p{L}*[^.!?\\n]{0,40}(?:ask|write|message|contact|clarify|check with)",
+          "(?:ask|write|message|contact)\\s+(?:me|us|the seller)\\s+before",
+          "not responsible", "no claims?", "at your own risk", "after (?:the )?purchase[^.!?\\n]{0,30}(?:write|message|contact|confirm)",
+          "(?:please\\s+)?(?:leave|write)\\s+(?:a\\s+)?(?:review|feedback)", "confirm (?:the )?(?:order|purchase)",
+          "видеозапис\\p{L}*", "запиш\\p{L}*\\s+видео", "сним\\p{L}*\\s+видео", "возврат\\p{L}*\\s+(?:не|нет)", "без\\s+возврат\\p{L}*",
+          "выда\\p{L}*\\s+автоматически", "перед\\s+покупк\\p{L}*", "подтверд\\p{L}*\\s+заказ",
+        ].join("|") +
+        ")(?![\\p{L}\\p{N}])",
+      "iu"
+    ),
+  },
+  {
+    // Greetings and introductions of the seller's store (the buyer sees GameBoost, not that store).
+    reason: "store introduction",
+    re: new RegExp(
+      "(?<![\\p{L}\\p{N}])(?:" +
+        [
+          "welcome(?:\\s+to)?", "hello", "hi there", "hey there", "greetings", "dear (?:buyers?|customers?|friends?)",
+          "(?:my|our|this)\\s+(?:store|shop|team|channel)", "in (?:my|our) (?:store|shop)", "thank(?:s| you) for (?:choosing|visiting|your|purchas\\p{L}*|buying)",
+          "i am (?:a |the )?seller", "we are (?:a |the )?(?:team|shop|store|seller)", "check (?:out )?my other", "other (?:offers|lots|accounts) in my",
+          "привет\\p{L}*", "здравствуй\\p{L}*", "добро пожаловать", "(?:мой|наш|моём|нашем)\\s+магазин\\p{L}*", "другие (?:лоты|предложения|аккаунты)",
+        ].join("|") +
+        ")(?![\\p{L}\\p{N}])",
+      "iu"
+    ),
+  },
   { reason: "link", re: /https?:\/\/\S+|\bwww\.\S+|\b[a-z0-9-]+\.(?:com|net|org|gg|io|ru|me|market|shop|store|to|ly|tv|co|su|ua|by)\b/iu },
   { reason: "email", re: /[\w.+-]+@[\w-]+\.[\w.-]+/u },
   { reason: "handle", re: /(?<![\w@])@[A-Za-z0-9_]{3,}/u },

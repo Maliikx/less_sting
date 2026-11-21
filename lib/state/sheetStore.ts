@@ -1,4 +1,5 @@
 import type { StateEntry, StateStore } from "./store"
+import { ensureOwnTab, quoteTab as quote } from "./ownTab"
 
 /**
  * StateStore kept in its OWN tab of the Google Sheet (default name LS_STATE, env STATE_SHEET_TAB).
@@ -25,9 +26,8 @@ export interface SheetsApi {
   append(range: string, values: (string | number)[][]): Promise<void>
 }
 
-export class StateTabConflictError extends Error {}
+export { TabConflictError as StateTabConflictError } from "./ownTab"
 
-const quote = (tab: string) => `'${tab.replace(/'/g, "''")}'`
 
 type Row = { rowNumber: number; key: string; entry: StateEntry }
 
@@ -45,33 +45,12 @@ export class SheetStateStore implements StateStore {
   /** Create the tab (with headers) if needed; refuse a same-named tab that isn't ours. Once per instance. */
   private ensureTab() {
     if (!this.ready) {
-      this.ready = (async () => {
-        const tabs = await this.api.listTabs()
-        if (!tabs.includes(this.tab)) {
-          await this.api.addTab(this.tab)
-          await this.api.batchUpdate([{ range: this.range("A1:D1"), values: [STATE_HEADERS] }])
-          return
-        }
-        const head = (await this.api.getValues(this.range("A1:D1")))[0] || []
-        const empty = head.every(c => !String(c ?? "").trim())
-        if (empty) {
-          // An empty tab with our name (e.g. created by hand): safe to claim, nothing to overwrite.
-          const any = await this.api.getValues(this.range("A1:Z20"))
-          if (any.some(r => r.some(c => String(c ?? "").trim()))) throw new StateTabConflictError(this.conflictMessage())
-          await this.api.batchUpdate([{ range: this.range("A1:D1"), values: [STATE_HEADERS] }])
-          return
-        }
-        if (STATE_HEADERS.some((h, i) => String(head[i] ?? "").trim() !== h)) throw new StateTabConflictError(this.conflictMessage())
-      })().catch(e => {
+      this.ready = ensureOwnTab(this.api, this.tab, STATE_HEADERS, "Set STATE_SHEET_TAB to another name.").catch(e => {
         this.ready = null // retry next time (e.g. a network error)
         throw e
       })
     }
     return this.ready
-  }
-
-  private conflictMessage() {
-    return `The sheet already has a tab named "${this.tab}" that was not created by this app. It was left untouched. Set STATE_SHEET_TAB to another name.`
   }
 
   private async readRows(): Promise<Row[]> {

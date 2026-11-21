@@ -227,6 +227,7 @@ export const funpay: SourceAdapter = {
     }
 
     const { category, categoryId } = extractCategory(html)
+    const sellerName = htmlToText(html.match(/class="media-user-name">\s*<a\b[^>]*\/users\/\d+\/?"[^>]*>([\s\S]*?)<\/a>/i)?.[1] || "") || undefined
     if (!category) warnings.push("category not found")
 
     const images = extractGallery(html, finalUrl)
@@ -260,6 +261,7 @@ export const funpay: SourceAdapter = {
       params,
       category,
       categoryId,
+      sellerName,
       game: gameFromCategory(category),
       images,
       externalMedia,

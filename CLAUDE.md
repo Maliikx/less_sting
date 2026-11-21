@@ -64,14 +64,62 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   KNOWN ISSUE: `/manage` dead-link check (`checkSource`) still matches "offer not found" anywhere in the page text (not fixed: `/manage` rule).
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
-## Known issues to fix in step 4
-- `POST /api/ai/prepare` reads 3 source pages AT THE SAME TIME, which breaks the ~1 request / 1.5 s FunPay rule. Serialise it.
-
 ## Batch listing UI (plan step 4, decided with the user)
-- Employees list 10-20 offers at a time. Input is ONE paste box, one line per offer: `link price seller` (price = number or multiplier).
-  Those three are the only manual fields.
+- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered);
+  each row has only offer link + price (number or multiplier). Plus price for all, +10 rows, "paste many links" (`link [price]`).
+  Settings next to the publish buttons (remembered per browser): delivery time + unit, default description, delivery instructions,
+  "Create as draft" / "List immediately". The page shows 4 steps (offers, prepare = read + clean, review, publish).
+- Duplicates are checked by TITLE ONLY (user decision): the page's original title and the cleaned title vs the sheet TITLE
+  column, and vs earlier offers in the batch. The page is read first (no AI is spent on duplicates). The same link twice is NOT
+  blocked: it is read again and caught by its title. Rows are keyed by their own row id (not the lot id).
+- No description at all -> the description is just the seller tag `#<seller>-<last 8 chars of the link>` (same tag POST /api/offers
+  appends to every listing, so it appears once). User asked for "last 6 digits": switching the tag everywhere would change `/` too (asked).
+- The review table shows each cleaned title and, under it, the original with removed words struck through (`lib/auto/diff.ts`).
+- Offers with no images: the user sets a DEFAULT IMAGE per GameBoost game once (link, not imgur), stored in the sheet's own tab
+  `DEFAULT_IMG` (GAME_ID | GAME_NAME | IMAGE_URL | UPDATED_AT; env DEFAULT_IMG_TAB; same own-tab guard as LS_STATE, `lib/state/ownTab.ts`).
+  Later offers of that game without images use it automatically (warn flag `default_image`, sheet NOTE "default image").
+- Speed: page reads START >= 1.5 s apart (shared gate) but up to 3 offers are in flight, so AI calls overlap the next read; 8 offers
+  per prepare call; game field specs cached in LS_STATE for 24 h; publish sends 5 per call; existing-offer lookups run in parallel.
 - One compact table to review (status, cleaned title, price, images, game; badges for defaulted fields / removed text), details expand
-  on click, "Publish selected" for all ready rows. Lightweight, not a form per offer. The existing `/` form stays as it is.
+  on click. Buttons act on ticked rows and show counts: Publish (ready rows), List now (drafts), Back to draft (listed), Delete
+  (created offers; confirmation; uses the existing DELETE route that refuses sold/ordered offers and marks the sheet row `deleted`).
+  Selection rules are pure + tested in `lib/auto/rows.ts`. The existing `/` form stays as it is.
+- BUILT (step 4): `/auto` page, `lib/auto/*` (lines parser, prepareBatch = one page at a time 1.5 s apart, game resolution, review
+  re-check), `POST /api/auto/publish` -> `lib/destinations` (DestinationAdapter; GameBoost adapter calls the EXISTING
+  `POST /api/offers` handler in-process, one request per seller+game). Server re-checks images + banned words before publishing.
+- TESTING PHASE: the page defaults to "Create as draft"; the user can switch to "List immediately" (server only lists on a literal
+  `listNow: true`). The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
+  `GOOGLE_SHEET_ID`) so test publishes don't land in the real Sheet1.
+- Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
+  (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
+- Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
+- Credentials (manual delivery message the buyer receives) = an editable template on /auto, default
+  "thank you for your purchase\n\ndelivery takes anywhere from 5 min up to [delivery time] ❤️"; `[delivery time]` is filled on the
+  server from the delivery setting ("1 hour", "2 days"); max 500 chars (`lib/auto/credentials.ts`).
+- Screenshots only on imgur -> its own flag `imgur_images` (red "imgur" badge + notice), NOT `no_images`, and the game's default
+  image is NOT used for them (real screenshots exist; the employee adds other image links).
+- Publishing 20 offers in one request hit Vercel's time limit (HTTP 504). POST /api/offers writes the sheet only AFTER all creates,
+  so a timeout can leave offers on GameBoost with no sheet row. Fix: the page publishes 3 offers per request (maxDuration 300), and
+  /api/auto/publish first looks each title up on GameBoost: if it already exists it is NOT created again and its missing sheet row
+  is appended (NOTE "recovered after an interrupted publish"). So pressing Publish again after a timeout is safe.
+
+## Cleaning (rules first, then AI)
+- Rules (`lib/cleaning`): banned terms cut their clause; a sentence with contacts, links, seller advertising, SELLER POLICY
+  (auto-issued data, no returns/refunds, record a video, ask before buying, not responsible...) or a STORE INTRODUCTION
+  (hello/welcome/my shop/thank you for choosing...) is dropped whole; FAQ blocks (heading -> blank line) and Q:/A: lines are dropped;
+  any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
+- AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
+  seller talk (I/me/my/we/our). Its prompt lists what to remove and keeps account facts from removed sentences.
+- FunPay params -> GameBoost fields without AI (`fieldsFromParams`): labels match by subject words ("Email linking" ~
+  email_not_linked), negative field names flip yes/no ("Email linked" -> email_not_linked = No), "Any platform" -> all options of a
+  multi-choice field or an any/all/cross option; never a guess when two labels match. Checked on real offer 69446008 (Genshin).
+
+## AI capacity (2026-11-19 estimate; limits change, check the Groq console)
+- One AI call ~1,300 tokens on real offers (range ~870-1,800). AI runs only when text is not English (rare: /en/ pages are translated)
+  or GameBoost fields are missing from the FunPay params.
+- Groq free (third-party sources, unofficial): llama-3.3-70b ~1,000 req/day, 100k-200k tokens/day, 6k-12k tokens/min;
+  llama-3.1-8b ~14,400 req/day, ~500k tokens/day, ~6k tokens/min. Limits are per Groq organization (shared by all employees).
+  Gemini 2.5 Flash free tier reportedly cut to ~20 req/day (unconfirmed). => worst case (AI on every offer) ~450 offers/day.
 
 ## NOT verified yet
 1. Behaviour of FunPay over time / at volume (300/day) from Vercel.

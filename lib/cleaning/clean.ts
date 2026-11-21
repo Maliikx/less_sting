@@ -60,17 +60,32 @@ function tidy(s: string, multiline: boolean): string {
  *  - a sentence with contact details / seller advertising is dropped completely
  * If everything would be removed from a title, the banned words alone are cut instead.
  */
-export function cleanText(input: string, kind: "title" | "description", custom?: CompiledTerms): CleanResult {
+export type CleanOptions = {
+  /** Names to remove with their whole sentence (the source seller's username / store name). */
+  names?: string[]
+}
+
+/** "FAQ" / "Q&A" / "Частые вопросы" heading: the block under it (up to a blank line) is dropped. */
+const FAQ_HEADING = /^[^\p{L}\p{N}]*(?:faq|f\.a\.q\.?|q\s*&\s*a|frequently asked questions?|questions? (?:and|&) answers?|частые вопросы|чаво|вопрос[ -]ответ)[^\p{L}\p{N}]*$/iu
+/** A question/answer line: "Q:", "A:", "Question:", "Вопрос:", "❓ ...". */
+const QA_LINE = /^[^\p{L}\p{N}]*(?:q|a|question|answer|вопрос|ответ)\s*[:.)-]\s|^\s*[❓❔]/iu
+
+const escapeName = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+export function cleanText(input: string, kind: "title" | "description", custom?: CompiledTerms, opts: CleanOptions = {}): CleanResult {
   const t = terms(custom)
   const removed: Removed[] = []
   const src = String(input || "").replace(/\r\n?/g, "\n")
   if (!src.trim()) return { text: "", removed }
+  const names = (opts.names || []).map(n => n.trim()).filter(n => n.length >= 3)
+  const nameRe = names.length ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${names.map(escapeName).join("|")})(?![\\p{L}\\p{N}])`, "iu") : null
+  const sentenceHit = (s: string) => (nameRe && nameRe.test(s) ? { reason: "seller name", match: s } : firstSentenceHit(s))
 
   const processLine = (line: string): string => {
     const sentences = line.split(SENTENCE_SPLIT)
     const keptSentences: string[] = []
     for (const sentence of sentences) {
-      const hit = firstSentenceHit(sentence)
+      const hit = sentenceHit(sentence)
       if (hit && kind === "description") {
         removed.push({ text: sentence.trim(), reason: hit.reason })
         continue
@@ -81,7 +96,7 @@ export function cleanText(input: string, kind: "title" | "description", custom?:
       for (let i = 0; i < parts.length; i += 2) {
         const clause = parts[i]
         const sep = parts[i + 1] ?? ""
-        const bad = (kind === "title" ? firstSentenceHit(clause) : null) || firstTermHit(clause, t)
+        const bad = (kind === "title" ? sentenceHit(clause) : null) || firstTermHit(clause, t)
         if (bad && clause.trim()) {
           removed.push({ text: clause.trim(), reason: bad.reason })
           continue // drop clause and its trailing separator
@@ -94,10 +109,20 @@ export function cleanText(input: string, kind: "title" | "description", custom?:
     return keptSentences.join(" ")
   }
 
-  let text =
-    kind === "title"
-      ? processLine(src.replace(/\n+/g, " "))
-      : src.split("\n").map(l => (l.trim() ? processLine(l) : "")).join("\n")
+  let text: string
+  if (kind === "title") text = processLine(src.replace(/\n+/g, " "))
+  else {
+    // FAQ blocks and Q/A lines are the seller's sales talk, not facts about the account: drop them whole.
+    let inFaq = false
+    const lines: string[] = []
+    for (const l of src.split("\n")) {
+      if (!l.trim()) { inFaq = false; lines.push(""); continue }
+      if (FAQ_HEADING.test(l)) { inFaq = true; removed.push({ text: l.trim(), reason: "FAQ" }); continue }
+      if (inFaq || QA_LINE.test(l)) { removed.push({ text: l.trim(), reason: "FAQ" }); continue }
+      lines.push(processLine(l))
+    }
+    text = lines.join("\n")
+  }
 
   text = tidy(text, kind === "description")
 
