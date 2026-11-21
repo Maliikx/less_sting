@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { AiClient } from "@/lib/ai/provider"
+import { AiClient, loadChain } from "@/lib/ai/provider"
+import { getStateStore } from "@/lib/state"
 import { canonicalIdOf, readSourceOffer } from "@/lib/sources"
 import { prepareOffer, type GameProfile, type PreparedOffer } from "@/lib/pipeline/prepare"
 import { loadGameProfile } from "@/lib/gameProfile"
@@ -19,11 +20,14 @@ export const maxDuration = 60
  * The browser calls this in small chunks (progress bar), same pattern as the dead-link check.
  */
 
-// One AI client for the whole server process: keeps provider cooldowns and the daily token count.
+// One AI client per server instance. Cooldowns and daily token counts are kept in the sheet's state tab
+// (StateStore), so every instance sees the same ones; the client syncs before each AI call.
 const globalAi = globalThis as unknown as { __lsAi?: AiClient }
-const ai = (globalAi.__lsAi ??= new AiClient())
+const ai = (globalAi.__lsAi ??= new AiClient(loadChain(), { store: getStateStore() }))
 
-// Sheet snapshot of already-listed source ids, refreshed at most every 30 s (Sheets read quota)
+// Sheet snapshot of already-listed source ids, refreshed at most every 30 s (Sheets read quota).
+// Deliberately NOT in the StateStore: it is only a read cache of the main sheet (the source of truth),
+// at most 30 s stale per instance; storing it in the state tab would add a Sheets read and fix nothing.
 let idCache: { at: number; ids: Map<string, string> } | null = null
 async function listedIds() {
   if (idCache && Date.now() - idCache.at < 30_000) return idCache.ids
