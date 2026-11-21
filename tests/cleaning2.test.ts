@@ -82,7 +82,8 @@ test("cleaning: Russian policy phrases and 'issued automatically' wording", () =
 })
 
 test("cleaning: no big losses on the real offers (account facts kept)", () => {
-  for (const f of readdirSync(DIR).filter(f => !f.startsWith("dead") && !f.includes(".ru."))) {
+  // 82035328 is almost all shop marketing: checked on its own below
+  for (const f of readdirSync(DIR).filter(f => !f.startsWith("dead") && !f.includes(".ru.") && !f.startsWith("82035328"))) {
     const o = real(f.replace(".html", ""))
     const c = cleanText(o.description || "", "description", undefined, { names: o.sellerName ? [o.sellerName] : [] })
     const kept = c.text.length / Math.max(1, (o.description || "").length)
@@ -122,4 +123,70 @@ test("AI prompt asks to drop seller talk and to read negative field names correc
   for (const s of ["issued automatically", "record a video", "FAQ", "store introductions", "email_not_linked", "SOURCE PARAMETERS first", "clearly implies"]) {
     assert.ok(SYSTEM_PROMPT.includes(s), s)
   }
+})
+
+/* ------------------------------------------------------------ reported Fortnite offer (82035328) */
+
+test("real offer 82035328 (Fortnite): title cut at emoji/brackets; shop marketing gone, account facts kept", async () => {
+  const { gameFromCategory } = await import("../lib/sources/funpay")
+  const o = real("82035328")
+  assert.equal(o.category, "Accounts for Fortnite")
+  assert.equal(gameFromCategory(o.category), "Fortnite")
+  const t = cleanText(o.title!, "title")
+  assert.equal(t.text, "✅DONATE ACCOUNT✅🔥【MAIL+NATIVE】🔥✅$3000+ SPENT✅KRATOS✅LEVIATHAN✅ANDROMEDA✅")
+  assert.deepEqual(t.removed.map(r => r.text), ["INSTANT DELIVERY", "WARRANTY"])
+  const d = cleanText(o.description!, "description", undefined, { names: [o.sellerName!] })
+  assert.equal(d.text, "5. 📧 All accounts come with a linked email.\n\n🎮There are also several fun games included on the accounts!")
+  assert.equal(findViolations(`${t.text}\n${d.text}`).length, 0)
+})
+
+test("titles: longest banned phrase wins; leftover empty/unmatched brackets and repeated emoji are tidied", async () => {
+  const { tidyBrackets } = await import("../lib/cleaning/clean")
+  assert.equal(cleanText("Account | instant delivery | 50 skins", "title").text, "Account | 50 skins")
+  assert.equal(tidyBrackets("A 【 】 B [x] (y"), "A   B [x] y")
+  assert.equal(tidyBrackets("✅✅ A ✅ ✅ B"), "✅ A ✅ B")
+})
+
+test("game fields: a list field described as 'x' + 'x.*' becomes ONE list; values are always sent as lists", async () => {
+  const { normalizeSpecs } = await import("../lib/gameFields")
+  const { shapeAccountData } = await import("../lib/pipeline/prepare")
+  const specs = normalizeSpecs([
+    { key: "platform", type: "enum", required: true, options: ["PC", "Mobile"] },
+    { key: "linkable_platforms", type: "string", required: true },
+    { key: "linkable_platforms.*", type: "enum", required: false, options: ["PC", "PlayStation", "Xbox", "Switch"] },
+  ])
+  assert.deepEqual(specs.map(s => s.key), ["platform", "linkable_platforms"])
+  assert.deepEqual(specs[1], { key: "linkable_platforms", type: "array", required: true, options: ["PC", "PlayStation", "Xbox", "Switch"] })
+  // the reported offer: FunPay "Platform: (PC) Battle Royale"
+  const fields = fieldsFromParams(specs, real("82035328").params)
+  assert.deepEqual(fields.linkable_platforms, ["PC"])
+  assert.deepEqual(shapeAccountData(specs, { linkable_platforms: "PC", "linkable_platforms.*": "PC", platform: "PC" }), { linkable_platforms: ["PC"], platform: "PC" })
+  assert.deepEqual(shapeAccountData(specs, { linkable_platforms: "(PC) Battle Royale" }), { linkable_platforms: ["PC"] })
+  assert.deepEqual(shapeAccountData(specs, { linkable_platforms: "Nintendo 64" }), {}, "not an allowed value: left out, not sent")
+})
+
+/* ------------------------------------------------------------ Groq retired the llama models (2026-08-16) */
+
+test("AI: new Groq model names load; reasoning models get low effort and room to answer; retired models are explained", async () => {
+  const { loadChain, isReasoningModel } = await import("../lib/ai/provider")
+  const chain = loadChain({ AI_PROVIDERS: "groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b", GROQ_API_KEY: "k" })
+  assert.deepEqual(chain.map(c => [c.provider, c.model]), [["groq", "openai/gpt-oss-120b"], ["groq", "openai/gpt-oss-20b"]])
+  assert.equal(isReasoningModel("openai/gpt-oss-120b"), true)
+  assert.equal(isReasoningModel("llama-3.3-70b-versatile"), false)
+
+  const bodies: Record<string, unknown>[] = []
+  const ok: FetchLike = async (_u, init) => {
+    bodies.push(JSON.parse(init.body))
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"title":"x"}' } }], usage: { total_tokens: 10 } }) }
+  }
+  await new AiClient(chain, { fetch: ok }).chatJson("s", "u", { maxTokens: 900 })
+  assert.equal(bodies[0].reasoning_effort, "low")
+  assert.ok((bodies[0].max_tokens as number) >= 2500)
+
+  const retired: FetchLike = async () => ({
+    ok: false, status: 404, headers: { get: () => null },
+    text: async () => '{"error":{"message":"The model `llama-3.3-70b-versatile` does not exist or you do not have access to it."}}',
+  })
+  const old = loadChain({ AI_PROVIDERS: "groq:llama-3.3-70b-versatile", GROQ_API_KEY: "k" })
+  await assert.rejects(new AiClient(old, { fetch: retired }).chatJson("s", "u"), /not available any more \(retired or renamed\) - update AI_PROVIDERS/)
 })

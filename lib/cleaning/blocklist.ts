@@ -76,6 +76,11 @@ export const SENTENCE_PATTERNS: { reason: string; re: RegExp }[] = [
     ),
   },
   {
+    // The shop talking about itself as "we/our" (case-sensitive "US" region names are not matched).
+    reason: "seller talk",
+    re: /(?<![\p{L}\p{N}'’])(?:we|we're|we’re|we've|we’ve|our|ours|мы|наш\p{L}*)(?![\p{L}\p{N}'’])/iu,
+  },
+  {
     // Greetings and introductions of the seller's store (the buyer sees GameBoost, not that store).
     reason: "store introduction",
     re: new RegExp(
@@ -84,6 +89,10 @@ export const SENTENCE_PATTERNS: { reason: string; re: RegExp }[] = [
           "welcome(?:\\s+to)?", "hello", "hi there", "hey there", "greetings", "dear (?:buyers?|customers?|friends?)",
           "(?:my|our|this)\\s+(?:store|shop|team|channel)", "in (?:my|our) (?:store|shop)", "thank(?:s| you) for (?:choosing|visiting|your|purchas\\p{L}*|buying)",
           "i am (?:a |the )?seller", "we are (?:a |the )?(?:team|shop|store|seller)", "check (?:out )?my other", "other (?:offers|lots|accounts) in my",
+          "here you (?:will |can )?find", "top[\\s-]?quality", "great prices?", "fast (?:delivery|replies|reply|response|answers?)",
+          "full support", "help and answers", "friendly attitude", "support for every", "how does the (?:deal|purchase|order|process) work",
+          "make (?:the )?payment", "confirm (?:that )?you (?:have )?received", "(?:receive|get) the product", "stolen or hacked",
+          "original owners", "not only about the product", "change (?:the )?(?:necessary |required )?(?:details|data) to your own", "convenient automations?", "more than just selling",
           "привет\\p{L}*", "здравствуй\\p{L}*", "добро пожаловать", "(?:мой|наш|моём|нашем)\\s+магазин\\p{L}*", "другие (?:лоты|предложения|аккаунты)",
         ].join("|") +
         ")(?![\\p{L}\\p{N}])",
@@ -138,6 +147,7 @@ export function compileTerms(extra?: string): CompiledTerms {
   if (extras.length) groups.push({ reason: "custom blocklist", terms: extras })
   return groups.map(g => ({
     reason: g.reason,
-    re: new RegExp(`(?<![\\p{L}\\p{N}])(?:${g.terms.map(entryToRegexSource).join("|")})(?![\\p{L}\\p{N}])`, "giu"),
+    // longest first, so "instant delivery" wins over "instant" (else "DELIVERY" is left behind)
+    re: new RegExp(`(?<![\\p{L}\\p{N}])(?:${[...g.terms].sort((a, b) => b.length - a.length).map(entryToRegexSource).join("|")})(?![\\p{L}\\p{N}])`, "giu"),
   }))
 }

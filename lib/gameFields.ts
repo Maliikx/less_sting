@@ -41,11 +41,37 @@ export function specsFromTemplate(
 ): FieldSpec[] {
   const req = new Set(required)
   const keys = new Set([...Object.keys(accountData), ...required])
-  return [...keys].map(key => {
-    const options = optionsOf(accountData[key])
-    const t = options ? "enum" : ((guessType(key, types as Record<string, FieldType>) ?? inferType(accountData[key])) as FieldSpec["type"])
-    return { key, type: t, required: req.has(key), options, min: mins[key] }
-  })
+  return normalizeSpecs(
+    [...keys].map(key => {
+      const options = optionsOf(accountData[key])
+      const t = options ? "enum" : ((guessType(key, types as Record<string, FieldType>) ?? inferType(accountData[key])) as FieldSpec["type"])
+      return { key, type: t, required: req.has(key), options, min: mins[key] }
+    })
+  )
+}
+
+/**
+ * GameBoost templates can describe a list field twice: "linkable_platforms" (the list) and "linkable_platforms.*"
+ * (one item, with the allowed values). Merge them into ONE array field with the item's options, so we send
+ * `linkable_platforms: ["PC"]` instead of a text value plus a stray "linkable_platforms.*" key (GameBoost 422:
+ * "account_data.linkable_platforms.0 is invalid").
+ */
+export function normalizeSpecs(specs: FieldSpec[]): FieldSpec[] {
+  const ITEM = /^(.+?)\.(?:\*|\d+)$/
+  const byKey = new Map<string, FieldSpec>()
+  for (const s of specs) if (!ITEM.test(s.key)) byKey.set(s.key, { ...s })
+  for (const s of specs) {
+    const m = s.key.match(ITEM)
+    if (!m) continue
+    const parent = byKey.get(m[1]) ?? { key: m[1], type: "array" as const, required: false }
+    byKey.set(m[1], {
+      ...parent,
+      type: "array",
+      required: parent.required || s.required,
+      options: parent.options?.length ? parent.options : s.options,
+    })
+  }
+  return [...byKey.values()]
 }
 
 function inferType(example: unknown): FieldType {
