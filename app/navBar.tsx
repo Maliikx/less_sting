@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 
-export default function NavBar({ active }: { active: "list" | "manage" }) {
+export default function NavBar({ active }: { active: "list" | "manage" | "probe" }) {
   const logout = async () => {
     await fetch("/api/login", { method: "DELETE" }).catch(() => {})
     window.location.href = "/login"
