@@ -95,7 +95,7 @@ function section(html: string, start: RegExp, end: RegExp) {
 /** "PUBG Mobile Accounts" -> "PUBG Mobile"; "Аккаунты PUBG Mobile" -> "PUBG Mobile". */
 export function gameFromCategory(category?: string) {
   if (!category) return undefined
-  const g = category.replace(/\s+(accounts?|account)$/i, "").replace(/^аккаунты\s+/i, "").trim()
+  const g = category.replace(/\s+(accounts?|account)$/i, "").replace(/^accounts?\s+(?:for|of)\s+/i, "").replace(/^аккаунты\s+/i, "").trim()
   return g && g !== category ? g : undefined
 }
 

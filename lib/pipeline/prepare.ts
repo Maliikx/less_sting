@@ -161,6 +161,26 @@ export function fieldsFromParams(specs: FieldSpec[], params: Record<string, stri
   return out
 }
 
+/**
+ * Last check on the shape GameBoost gets: no item keys ("linkable_platforms.*"), and list fields always as lists
+ * (a single value becomes [value]). Prevents 422s like "account_data.linkable_platforms.0 is invalid".
+ */
+export function shapeAccountData(specs: FieldSpec[], values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(values)) {
+    if (/[.*]/.test(k)) continue
+    const spec = specs.find(s => s.key === k)
+    if (spec?.type === "array" && !Array.isArray(v)) {
+      if (v === undefined || v === null || v === "") continue
+      const item = String(v)
+      const opt = spec.options?.find(o => nrm(o) === nrm(item)) ?? spec.options?.find(o => nrm(item).includes(nrm(o)))
+      if (spec.options?.length && !opt) continue // not an allowed value: leave it out rather than send something invalid
+      out[k] = [opt ?? item]
+    } else out[k] = v
+  }
+  return out
+}
+
 /** First-person seller talk left after the rules ("I ask you to...", "my store", "we deliver"). */
 const SELLER_VOICE = /(?<![\p{L}\p{N}'’])(?:i|i'm|i’m|i am|me|my|mine|we|we're|our)(?![\p{L}\p{N}'’])/iu
 
@@ -322,7 +342,7 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
 
   /* 8. required fields: lowest value, and say so */
   const filled = applyDefaults(specs, fields)
-  base.accountData = filled.values
+  base.accountData = shapeAccountData(specs, filled.values)
   base.defaulted = filled.defaulted
   for (const f of filled.defaulted) flag("warn", "defaulted", `${f.key} = ${JSON.stringify(f.value)} (${f.reason})`)
 

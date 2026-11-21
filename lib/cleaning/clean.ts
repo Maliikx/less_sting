@@ -18,6 +18,29 @@ const terms = (custom?: CompiledTerms) => custom ?? (defaultTerms ??= compileTer
 
 /** Clause separators we may cut at without breaking grammar: | ; • · , and spaced dashes. */
 const CLAUSE_SPLIT = /(\s*[|;•·]\s*|\s+[-–—]\s+|,\s+)/u
+/** Titles also use emoji runs and brackets as separators: "✅DONATE ACCOUNT✅INSTANT DELIVERY【WARRANTY】🔥..." */
+const TITLE_SPLIT = /(\s*(?:[|;•·]|[\p{Extended_Pictographic}\u2600-\u27BF\uFE0F\u200D]+|[【】\[\]「」『』])\s*|\s+[-–—]\s+|,\s+)/u
+
+const PAIRS: Record<string, string> = { "【": "】", "[": "]", "(": ")", "「": "」", "『": "』" }
+const CLOSERS = new Set(Object.values(PAIRS))
+/** Drop brackets left without a partner after a cut, then empty pairs ("【 】"), then repeated emoji ("✅✅"). */
+export function tidyBrackets(s: string): string {
+  const chars = [...s]
+  const stack: number[] = []
+  const drop = new Set<number>()
+  chars.forEach((c, i) => {
+    if (PAIRS[c]) stack.push(i)
+    else if (CLOSERS.has(c)) {
+      const open = stack.length ? stack[stack.length - 1] : -1
+      if (open >= 0 && PAIRS[chars[open]] === c) stack.pop()
+      else drop.add(i)
+    }
+  })
+  stack.forEach(i => drop.add(i))
+  let out = chars.filter((_, i) => !drop.has(i)).join("")
+  for (let k = 0; k < 3; k++) out = out.replace(/【\s*】|\[\s*\]|\(\s*\)|「\s*」|『\s*』/gu, " ")
+  return out.replace(/(\p{Extended_Pictographic}\uFE0F?)(?:\s*\1)+/gu, "$1")
+}
 const SENTENCE_SPLIT = /(?<=[.!?])\s+/u
 
 const firstTermHit = (s: string, t: CompiledTerms) => {
@@ -51,7 +74,9 @@ function tidy(s: string, multiline: boolean): string {
       .replace(DANGLING_END, "")
       .trim()
   if (!multiline) return fix(s)
-  return s.split("\n").map(fix).filter((l, i, a) => l || (a[i - 1] && a[i + 1] !== undefined)).join("\n").replace(/\n{3,}/g, "\n\n").trim()
+  // a line left with only numbering / emoji / punctuation ("1.", "❤️") after cleaning carries nothing
+  const empty = (l: string) => !/\p{L}/u.test(l)
+  return s.split("\n").map(fix).map(l => (empty(l) ? "" : l)).filter((l, i, a) => l || (a[i - 1] && a[i + 1] !== undefined)).join("\n").replace(/\n{3,}/g, "\n\n").trim()
 }
 
 /**
@@ -91,7 +116,7 @@ export function cleanText(input: string, kind: "title" | "description", custom?:
         continue
       }
       // Titles are one line: cut only the clause with the contact/ad hit, not the whole title
-      const parts = sentence.split(CLAUSE_SPLIT) // [clause, sep, clause, sep, ...]
+      const parts = sentence.split(kind === "title" ? TITLE_SPLIT : CLAUSE_SPLIT) // [clause, sep, clause, sep, ...]
       const out: string[] = []
       for (let i = 0; i < parts.length; i += 2) {
         const clause = parts[i]
@@ -99,7 +124,9 @@ export function cleanText(input: string, kind: "title" | "description", custom?:
         const bad = (kind === "title" ? sentenceHit(clause) : null) || firstTermHit(clause, t)
         if (bad && clause.trim()) {
           removed.push({ text: clause.trim(), reason: bad.reason })
-          continue // drop clause and its trailing separator
+          // drop the clause; in titles keep a closing bracket that belongs to the previous part
+          if (kind === "title" && /[】\]」』)]/u.test(sep)) out.push(sep.replace(/[^】\]」』)]/gu, ""))
+          continue
         }
         out.push(clause + sep)
       }
@@ -124,6 +151,7 @@ export function cleanText(input: string, kind: "title" | "description", custom?:
     text = lines.join("\n")
   }
 
+  if (kind === "title") text = tidyBrackets(text)
   text = tidy(text, kind === "description")
 
   // A title that lost every clause: keep the words, cut only the banned terms themselves
