@@ -113,11 +113,22 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
 - AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
   seller talk (I/me/my/we/our). Its prompt lists what to remove and keeps account facts from removed sentences.
+- Titles: emoji runs (✅ 🔥) and 【】/[] also separate parts, so "INSTANT DELIVERY" / "【WARRANTY】" are cut as whole parts; banned
+  phrases match longest-first; leftover empty/unmatched brackets and repeated emoji are tidied. Descriptions: sentences where the
+  shop speaks as "we/our" ("seller talk") and shop marketing ("here you will find", "great prices", "how does the deal work"...)
+  are dropped; lines left without letters ("1.") are dropped. Checked on real Fortnite offer 82035328 (almost all marketing).
+- GameBoost list fields: a template can describe "x" and "x.*" (item with options); `normalizeSpecs` merges them into ONE array
+  field and `shapeAccountData` never sends "x.*" keys and always sends lists as lists (live 422 "linkable_platforms.0 is invalid").
+  Cached game specs use key `gameprofile:v2:<id>`.
+- FunPay categories can be "Accounts for Fortnite" as well as "PUBG Mobile Accounts" (both -> game name).
 - FunPay params -> GameBoost fields without AI (`fieldsFromParams`): labels match by subject words ("Email linking" ~
   email_not_linked), negative field names flip yes/no ("Email linked" -> email_not_linked = No), "Any platform" -> all options of a
   multi-choice field or an any/all/cross option; never a guess when two labels match. Checked on real offer 69446008 (Genshin).
 
 ## AI capacity (2026-11-19 estimate; limits change, check the Groq console)
+- Groq RETIRED llama-3.3-70b-versatile and llama-3.1-8b-instant on 2026-08-16 (live error 2026-11-21: "model does not exist").
+  Use `AI_PROVIDERS=groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b` (Groq's recommended replacements). They are reasoning
+  models: the client sends reasoning_effort "low" and max_tokens >= 2500. The limits below were for the llama models.
 - One AI call ~1,300 tokens on real offers (range ~870-1,800). AI runs only when text is not English (rare: /en/ pages are translated)
   or GameBoost fields are missing from the FunPay params.
 - Groq free (third-party sources, unofficial): llama-3.3-70b ~1,000 req/day, 100k-200k tokens/day, 6k-12k tokens/min;

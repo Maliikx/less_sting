@@ -2,7 +2,8 @@
  * One small client for every OpenAI-compatible chat API: Groq, Google Gemini, OpenRouter, a local Ollama.
  * Switching provider = changing AI_PROVIDERS in .env.local, no code change.
  *
- *   AI_PROVIDERS="groq:llama-3.3-70b-versatile,groq:llama-3.1-8b-instant,gemini:gemini-2.5-flash,ollama:qwen2.5:7b"
+ *   AI_PROVIDERS="groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b"
+ *   (Groq retired llama-3.3-70b-versatile and llama-3.1-8b-instant on 2026-08-16; check console.groq.com/docs/models)
  *
  * The list is a FALLBACK CHAIN: the first entry that is not cooling down / out of budget is used.
  * A 429 or 5xx moves on to the next entry, so a free tier running dry never stops the pipeline.
@@ -37,6 +38,9 @@ export function loadChain(env: Record<string, string | undefined> = process.env)
   }
   return out
 }
+
+/** Models that reason before answering (OpenAI gpt-oss, Qwen3, DeepSeek R1...). */
+export const isReasoningModel = (model: string) => /gpt-oss|qwen3|deepseek-r1|(^|\/)o\d|reason/i.test(model)
 
 export type ChatResult = { json: unknown; text: string; used: string; tokens: number }
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{
@@ -161,7 +165,10 @@ export class AiClient {
             body: JSON.stringify({
               model: e.model,
               temperature: 0,
-              max_tokens: opts.maxTokens ?? 1200,
+              // Reasoning models (gpt-oss, qwen3...) think before answering and that counts against max_tokens:
+              // ask for low effort and leave room, or the JSON answer gets cut off.
+              max_tokens: isReasoningModel(e.model) ? Math.max(opts.maxTokens ?? 1200, 2500) : (opts.maxTokens ?? 1200),
+              ...(isReasoningModel(e.model) && e.provider === "groq" ? { reasoning_effort: "low" } : {}),
               response_format: { type: "json_object" },
               messages: [
                 { role: "system", content: system },
@@ -178,7 +185,11 @@ export class AiClient {
             errors.push(`${this.key(e)}: HTTP ${res.status}`)
             break // next chain entry
           }
-          if (!res.ok) { errors.push(`${this.key(e)}: HTTP ${res.status} ${body.slice(0, 120)}`); break }
+          if (!res.ok) {
+            const gone = (res.status === 404 || res.status === 400) && /does not exist|decommissioned|deprecated|not found|no access/i.test(body)
+            errors.push(gone ? `${this.key(e)}: this model is not available any more (retired or renamed) - update AI_PROVIDERS in Vercel` : `${this.key(e)}: HTTP ${res.status} ${body.slice(0, 120)}`)
+            break
+          }
           const data = JSON.parse(body) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } }
           const text = data.choices?.[0]?.message?.content ?? ""
           s.tokensToday += data.usage?.total_tokens ?? Math.ceil((system.length + user.length + text.length) / 4)
