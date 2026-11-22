@@ -12,7 +12,7 @@ import { aiLimitNotices, type AiUsageLite, type Notice } from "@/lib/auto/aiNoti
 import { EMPLOYEES } from "@/lib/employees"
 import { revalidate, toPublishItem, type ReviewRow } from "@/lib/auto/review"
 import {
-  actionTargets, canPublishRow, isSelectable, newRow, pruneSelection, rowProblem, rowsFromPaste, rowsToPrepare,
+  actionTargets, badFieldsOf, canPublishRow, isSelectable, newRow, parseFieldInput, pruneSelection, rowProblem, rowsFromPaste, rowsToPrepare,
   selectAll, selectCreated, selectReady, type InputRow, type ResultRow,
 } from "@/lib/auto/rows"
 import { diffWords, titleChanged } from "@/lib/auto/diff"
@@ -189,7 +189,14 @@ export default function AutoClient() {
     })
   const patchRow = (key: string, patch: Partial<ResultRow>) => updateRows(prev => prev.map(r => (r.key === key ? { ...r, ...patch } : r)))
   const edit = (key: string, patch: Partial<ResultRow>) =>
-    updateRows(prev => prev.map(r => (r.key === key ? { ...(revalidate({ ...r, ...patch } as ReviewRow) as ResultRow), key, result: r.result } : r)))
+    updateRows(prev =>
+      prev.map(r =>
+        r.key === key
+          ? // editing a row whose publish failed clears the old error: it goes back to ready/check and can be published again
+            { ...(revalidate({ ...r, ...patch } as ReviewRow) as ResultRow), key, result: r.result?.status === "failed" ? undefined : r.result }
+          : r
+      )
+    )
 
   /** Step 2: prepare in chunks; `picks` = categoryId -> game chosen by the user. Rows with the same key are replaced. */
   async function prepare(lines: { key: string; link: string; price: string; seller: string }[], picks: Record<string, GameRef> = {}) {
@@ -592,7 +599,7 @@ export default function AutoClient() {
                           {isOpen && (
                             <tr className="border-b border-neutral-800 bg-neutral-950/60">
                               <td colSpan={7} className="p-3">
-                                <Details row={r} onEdit={patch => edit(r.key, patch)} locked={!!r.result || ["dead", "duplicate", "blocked", "error"].includes(r.status)} />
+                                <Details row={r} onEdit={patch => edit(r.key, patch)} locked={r.result?.status === "created" || r.result?.status === "duplicate" || ["dead", "duplicate", "blocked", "error"].includes(r.status)} />
                               </td>
                             </tr>
                           )}
@@ -611,6 +618,7 @@ export default function AutoClient() {
 }
 
 function Details({ row, onEdit, locked }: { row: ResultRow; onEdit: (p: Partial<ResultRow>) => void; locked: boolean }) {
+  const bad = badFieldsOf(row)
   const field = "w-full rounded bg-neutral-200 px-2 py-1 text-xs text-neutral-900 disabled:opacity-70"
   const tag = descriptionTag(row.seller, row.link)
   return (
@@ -665,11 +673,35 @@ function Details({ row, onEdit, locked }: { row: ResultRow; onEdit: (p: Partial<
           </div>
         )}
         {Object.keys(row.accountData).length > 0 && (
-          <div><p className="font-semibold">Game details sent to GameBoost</p>
-            <ul>
+          <div><p className="font-semibold">Game details sent to GameBoost {!locked && <span className="font-normal text-neutral-400">(editable)</span>}</p>
+            {bad.length > 0 && <p className="mb-1 text-red-300">GameBoost refused: {bad.join(", ")}. Fix the value (as GameBoost names it) and publish again.</p>}
+            <ul className="space-y-1">
               {Object.entries(row.accountData).map(([k, v]) => {
                 const d = row.defaulted.find(x => x.key === k)
-                return <li key={k} className={d ? "rounded bg-orange-900/70 px-1 font-semibold text-orange-200" : ""}>{k}: {JSON.stringify(v)} {d && `— DEFAULTED to the lowest value (${d.reason})`}</li>
+                const isBad = bad.includes(k)
+                const set = (next: unknown) =>
+                  onEdit({ accountData: { ...row.accountData, [k]: next }, defaulted: row.defaulted.filter(x => x.key !== k) })
+                return (
+                  <li key={k} className={`flex flex-wrap items-center gap-2 rounded px-1 ${isBad ? "bg-red-900/70 ring-1 ring-red-500" : d ? "bg-orange-900/70 font-semibold text-orange-200" : ""}`}>
+                    <span className="min-w-[140px]">{k}</span>
+                    {locked ? (
+                      <span>{JSON.stringify(v)}</span>
+                    ) : typeof v === "boolean" ? (
+                      <select className="rounded bg-neutral-200 px-1 py-0.5 text-neutral-900" value={String(v)} onChange={e => set(e.target.value === "true")}>
+                        <option value="true">true (yes)</option>
+                        <option value="false">false (no)</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="w-48 rounded bg-neutral-200 px-1 py-0.5 text-neutral-900"
+                        defaultValue={Array.isArray(v) ? v.join(", ") : String(v ?? "")}
+                        title={Array.isArray(v) ? "Several values: separate with commas" : undefined}
+                        onBlur={e => { const next = parseFieldInput(e.target.value, v); if (JSON.stringify(next) !== JSON.stringify(v)) set(next) }}
+                      />
+                    )}
+                    {d && <span className="text-xs">DEFAULTED to the lowest value ({d.reason})</span>}
+                  </li>
+                )
               })}
             </ul>
           </div>

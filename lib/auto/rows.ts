@@ -58,7 +58,28 @@ export type ResultRow = PreparedOffer & { key: string; result?: PublishResult; d
 const created = (r: ResultRow) => r.result?.status === "created" && !!r.result.offerId && !r.deleted
 export const isDraft = (r: ResultRow) => created(r) && r.result!.offerStatus === "draft"
 export const isListed = (r: ResultRow) => created(r) && r.result!.offerStatus === "listed"
-export const canPublishRow = (r: ResultRow) => r.status === "ready" && !!r.game && !r.result
+/** Ready, with a game, and not created yet. A row whose publish FAILED can be fixed and published again. */
+export const canPublishRow = (r: ResultRow) => r.status === "ready" && !!r.game && (!r.result || r.result.status === "failed")
+
+/** Fields GameBoost complained about in a failed publish ("... | check: server, is_ranked_ready | missing: rank"). */
+export function badFieldsOf(r: Pick<ResultRow, "result">): string[] {
+  const e = r.result?.status === "failed" ? r.result.error || "" : ""
+  const out: string[] = []
+  for (const m of e.matchAll(/(?:check|missing):\s*([\w,\s.*-]+?)(?=\s*\||$)/g)) out.push(...m[1].split(",").map(x => x.trim()).filter(Boolean))
+  return [...new Set(out)]
+}
+
+/** A value typed in the row's game-details editor, converted to the type the field had (true/false, number, list). */
+export function parseFieldInput(text: string, previous: unknown): unknown {
+  const t = text.trim()
+  if (typeof previous === "boolean") return /^(true|yes|1)$/i.test(t)
+  if (typeof previous === "number") {
+    const n = Number(t.replace(",", "."))
+    return Number.isFinite(n) ? n : previous
+  }
+  if (Array.isArray(previous)) return t.split(",").map(x => x.trim()).filter(Boolean)
+  return t
+}
 /** Rows that can be ticked at all: something can still be done with them. */
 export const isSelectable = (r: ResultRow) => canPublishRow(r) || created(r)
 

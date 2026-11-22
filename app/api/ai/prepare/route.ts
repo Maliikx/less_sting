@@ -5,7 +5,8 @@ import { readSourceOffer } from "@/lib/sources"
 import { titleKey } from "@/lib/text"
 import { getDefaultImageStore } from "@/lib/auto/defaultImagesServer"
 import type { GameProfile } from "@/lib/pipeline/prepare"
-import { normalizeSpecs, type FieldSpec } from "@/lib/gameFields"
+import { normalizeSpecs } from "@/lib/gameFields"
+import { readCachedSpecs, writeCachedSpecs } from "@/lib/auto/gameProfileCache"
 import { loadGameProfile } from "@/lib/gameProfile"
 import { listGames } from "@/lib/gameboost"
 import { COL, readRows, sheetErrorMessage } from "@/lib/sheets"
@@ -51,20 +52,17 @@ async function listedTitles() {
 
 type Item = { link?: string; price?: string; seller?: string }
 
-const PROFILE_TTL_MS = 24 * 3600_000
-
 /**
  * Game field specs: shared cache in LS_STATE (24 h) so a fresh serverless instance does not re-load the GameBoost
  * template and re-run the required-field probe for every game; falls back to loading them.
  */
 async function profileFor(g: GameRef): Promise<GameProfile> {
   const store = getStateStore()
-  const key = `gameprofile:v2:${g.id}` // v2: list fields merged (normalizeSpecs); old cached shapes are ignored
-  const hit = await store.get<FieldSpec[]>(key).catch(() => null)
-  if (hit && Array.isArray(hit.value)) return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: normalizeSpecs(hit.value) }
+  const cached = await readCachedSpecs(store, g.id)
+  if (cached) return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: cached }
   const p = await loadGameProfile({ gameId: g.id, gameSlug: g.slug, gameName: g.name })
   const specs = normalizeSpecs(p.specs)
-  await store.set(key, specs, { ttlMs: PROFILE_TTL_MS }).catch(() => {})
+  await writeCachedSpecs(store, g.id, specs)
   return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs }
 }
 
