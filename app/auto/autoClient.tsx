@@ -111,6 +111,8 @@ export default function AutoClient() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
   const [inputs, setInputs] = useState<InputRow[]>(() => Array.from({ length: 5 }, () => newRow()))
   const [bulkPrice, setBulkPrice] = useState("")
+  /** Row just added with "Add row": its link box gets the cursor. */
+  const [focusRow, setFocusRow] = useState<string | null>(null)
   const [paste, setPaste] = useState("")
   const [showPaste, setShowPaste] = useState(false)
   const [rows, setRows] = useState<ResultRow[]>([])
@@ -405,7 +407,7 @@ export default function AutoClient() {
                   <div key={r.id} className={`grid grid-cols-[2rem_1fr] gap-2 rounded-lg border bg-neutral-900 p-2 sm:grid-cols-[2rem_1fr_9rem_2rem] ${problem ? "border-yellow-600" : "border-neutral-700"}`}>
                     <span className="pt-2 text-xs text-neutral-500">{i + 1}</span>
                     <div>
-                      <Input className={inputCls} placeholder="https://funpay.com/en/lots/offer?id=..." value={r.link} onChange={e => setInput(r.id, { link: e.target.value })} />
+                      <Input className={inputCls} placeholder="https://funpay.com/en/lots/offer?id=..." value={r.link} autoFocus={r.id === focusRow} onChange={e => setInput(r.id, { link: e.target.value })} />
                       {problem && <p className="mt-1 text-xs text-yellow-300">⚠ {problem}</p>}
                     </div>
                     <Input className={`${inputCls} col-start-2 sm:col-start-auto`} placeholder="100 or x2" value={r.price} onChange={e => setInput(r.id, { price: e.target.value })} />
@@ -413,6 +415,17 @@ export default function AutoClient() {
                   </div>
                 )
               })}
+              <button
+                type="button"
+                onClick={() => {
+                  const row = newRow()
+                  setFocusRow(row.id)
+                  setInputs(prev => [...prev, row])
+                }}
+                className="w-full rounded-lg border border-dashed border-neutral-600 py-2 text-sm text-neutral-300 hover:border-neutral-400 hover:bg-neutral-800/60 hover:text-white"
+              >
+                ➕ Add row
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 border-t border-neutral-700 pt-3">
