@@ -51,3 +51,17 @@ export default function ProgressToast({ label, done, total, detail, onStop, stop
     </div>
   )
 }
+
+/** A notification card (e.g. "AI model out of tokens"), shown in the same floating stack until closed. */
+export function NoticeToast({ tone, title, body, onClose }: { tone: "warn" | "error"; title: string; body: string; onClose: () => void }) {
+  const cls = tone === "error" ? "border-red-600 bg-red-950/95" : "border-yellow-600 bg-yellow-950/95"
+  return (
+    <div role="alert" className={`pointer-events-auto rounded-lg border p-3 text-white shadow-2xl shadow-black/50 backdrop-blur ${cls}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-semibold">{tone === "error" ? "⛔" : "⚠️"} {title}</p>
+        <button type="button" aria-label="Close" className="-mt-1 px-1 text-neutral-300 hover:text-white" onClick={onClose}>✕</button>
+      </div>
+      <p className="mt-1 text-xs text-neutral-200">{body}</p>
+    </div>
+  )
+}

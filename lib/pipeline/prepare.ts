@@ -6,6 +6,7 @@ import { applyDefaults, isEmptyValue, type Defaulted, type FieldSpec } from "../
 import { descriptionTag, fixTitle, resolvePrice } from "../offerRules"
 import { canonicalIdOf } from "../sources/index"
 import { IMGUR_MESSAGE } from "../auto/messages"
+import { roundPrice, roundingMessage } from "../auto/pricing"
 import type { SourceOffer } from "../sources/types"
 
 /**
@@ -67,7 +68,10 @@ export type PreparedOffer = {
   imgurImages?: boolean
   sourcePrice?: number
   priceText?: string
+  /** Final GameBoost price (after rounding). */
   priceEur?: number
+  /** Set when the price was rounded up (from >= 150 to the next 5): the price before rounding. */
+  priceBeforeRounding?: number
   accountData: Record<string, unknown>
   /** Required fields we could not find: filled with the lowest value. Shown highlighted and logged. */
   defaulted: Defaulted[]
@@ -338,7 +342,14 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   /* 7. price */
   const price = resolvePrice(base.priceInput, src.price !== undefined ? String(src.price) : undefined)
   if (price.error) flag("error", "price", price.error)
-  else base.priceEur = price.value
+  else {
+    const r = roundPrice(price.value!)
+    base.priceEur = r.value
+    if (r.rounded) {
+      base.priceBeforeRounding = r.original
+      flag("info", "price_rounded", roundingMessage(r))
+    }
+  }
 
   /* 8. required fields: lowest value, and say so */
   const filled = applyDefaults(specs, fields)

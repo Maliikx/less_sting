@@ -52,7 +52,27 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 
 export class AiUnavailableError extends Error {}
 
-type State = { cooldownUntil: number; day: string; tokensToday: number }
+/** Why a model is paused: its daily quota is used up, a per-minute limit, our own daily budget, or a server error. */
+export type LimitKind = "daily" | "minute" | "budget" | "error"
+type State = { cooldownUntil: number; day: string; tokensToday: number; limit?: LimitKind }
+
+/** One model's state for the UI (toasts) and reports. */
+export type AiUsage = { entry: string; tokensToday: number; cooldownSeconds: number; limit?: LimitKind }
+
+/**
+ * Read a 429/5xx: is it the DAILY quota (tokens/requests per day) or a short per-minute limit, and when does it lift?
+ * Groq says e.g. "Rate limit reached ... on tokens per day (TPD) ... Please try again in 7m12.5s."
+ */
+export function readLimit(status: number, body: string, retryAfterHeader: string | null): { kind: LimitKind; waitMs?: number } {
+  const b = String(body || "")
+  const kind: LimitKind = status >= 500 ? "error" : /per day|\bTPD\b|\bRPD\b|daily|quota/i.test(b) ? "daily" : "minute"
+  const m = b.match(/try again in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i)
+  let waitMs: number | undefined
+  if (m && (m[1] || m[2] || m[3])) waitMs = ((Number(m[1] || 0) * 60 + Number(m[2] || 0)) * 60 + Number(m[3] || 0)) * 1000
+  const ra = Number(retryAfterHeader)
+  if (!waitMs && Number.isFinite(ra) && ra > 0) waitMs = ra * 1000
+  return { kind, waitMs }
+}
 
 /** Strip ```json fences and take the outermost {...}. */
 export function parseJsonLoose(text: string): unknown {
@@ -99,7 +119,10 @@ export class AiClient {
         const r = remote.get(this.storeKey(e))?.value
         if (!r) continue
         const local = this.st(e)
-        if (r.cooldownUntil > local.cooldownUntil) local.cooldownUntil = r.cooldownUntil
+        if (r.cooldownUntil > local.cooldownUntil) {
+          local.cooldownUntil = r.cooldownUntil
+          local.limit = r.limit
+        }
         if (r.day === local.day && r.tokensToday > local.tokensToday) local.tokensToday = r.tokensToday
       }
     } catch (err) {
@@ -133,15 +156,22 @@ export class AiClient {
   private st(e: ProviderEntry): State {
     let s = this.state.get(this.key(e))
     if (!s || s.day !== this.today()) {
-      s = { cooldownUntil: s?.cooldownUntil ?? 0, day: this.today(), tokensToday: 0 }
+      s = { cooldownUntil: s?.cooldownUntil ?? 0, day: this.today(), tokensToday: 0, limit: s?.limit === "budget" ? undefined : s?.limit }
       this.state.set(this.key(e), s)
     }
     return s
   }
 
   /** For the UI / daily report: what has been used today per chain entry. */
-  usage() {
-    return this.chain.map(e => ({ entry: this.key(e), tokensToday: this.st(e).tokensToday, cooldownSeconds: Math.max(0, Math.ceil((this.st(e).cooldownUntil - this.now()) / 1000)) }))
+  usage(): AiUsage[] {
+    const budget = this.opts.dailyTokenBudget ?? Number(process.env.AI_DAILY_TOKEN_BUDGET || 0)
+    return this.chain.map(e => {
+      const s = this.st(e)
+      const cooldownSeconds = Math.max(0, Math.ceil((s.cooldownUntil - this.now()) / 1000))
+      const overBudget = budget > 0 && s.tokensToday >= budget
+      const limit: LimitKind | undefined = overBudget ? "budget" : cooldownSeconds > 0 ? s.limit : undefined
+      return { entry: this.key(e), tokensToday: s.tokensToday, cooldownSeconds, ...(limit ? { limit } : {}) }
+    })
   }
 
   /** Ask for a JSON object. Tries each chain entry in order; throws AiUnavailableError if all fail. */
@@ -179,10 +209,13 @@ export class AiClient {
           })
           const body = await res.text()
           if (res.status === 429 || res.status >= 500) {
-            const ra = Number(res.headers.get("retry-after"))
-            s.cooldownUntil = this.now() + (Number.isFinite(ra) && ra > 0 ? ra * 1000 : 60_000)
+            const lim = readLimit(res.status, body, res.headers.get("retry-after"))
+            // daily quota with no hint: wait until the next UTC day (when the day counters restart)
+            const untilTomorrow = Date.UTC(new Date(this.now()).getUTCFullYear(), new Date(this.now()).getUTCMonth(), new Date(this.now()).getUTCDate() + 1) - this.now()
+            s.cooldownUntil = this.now() + (lim.waitMs ?? (lim.kind === "daily" ? untilTomorrow : 60_000))
+            s.limit = lim.kind
             await this.persist(e)
-            errors.push(`${this.key(e)}: HTTP ${res.status}`)
+            errors.push(`${this.key(e)}: ${lim.kind === "daily" ? "out of tokens for today" : lim.kind === "minute" ? "rate limit (per minute)" : `HTTP ${res.status}`}`)
             break // next chain entry
           }
           if (!res.ok) {

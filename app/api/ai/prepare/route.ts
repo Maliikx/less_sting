@@ -129,5 +129,6 @@ export async function POST(req: Request) {
       defaultImageFor: gameId => defaults.get(gameId)?.url ?? null,
     }
   )
-  return NextResponse.json({ results, aiUsage: ai.usage() })
+  // Every model's state as all instances see it (for the "AI model out of tokens" toasts on /auto)
+  return NextResponse.json({ results, aiUsage: await ai.sharedUsage() })
 }

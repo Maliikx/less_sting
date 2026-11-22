@@ -132,7 +132,8 @@ test("batch: game from the category; unknown game -> flagged game_unknown, needs
   assert.deepEqual(out[0].game, PUBG)
   assert.equal(out[0].accountData.level, 82, "filled from the FunPay params")
   assert.equal(out[0].status, "ready")
-  assert.equal(out[0].priceEur, 361.28, "x2 of the USD buyer price 180.64")
+  assert.equal(out[0].priceEur, 365, "x2 of the USD buyer price 180.64 = 361.28, rounded up to the next 5 (>= 150)")
+  assert.equal(out[0].priceBeforeRounding, 361.28)
   assert.equal(out[1].game, null)
   assert.equal(out[1].category, "Raid: Shadow Legends Accounts")
   assert.ok(out[1].flags.some(f => f.code === "game_unknown" && f.level === "error"))
@@ -194,7 +195,7 @@ test("review: adding image links by hand turns a no-images offer ready; imgur an
 
   const badPrice = revalidate({ ...fixed, priceInput: "abc" })
   assert.equal(badPrice.status, "needs_review")
-  assert.equal(revalidate({ ...fixed, priceInput: "x2" }).priceEur, 572.9)
+  assert.equal(revalidate({ ...fixed, priceInput: "x2" }).priceEur, 575, "572.90 rounded up")
 })
 
 test("review: dead / duplicate / blocked rows stay as they are", async () => {

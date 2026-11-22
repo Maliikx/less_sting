@@ -96,6 +96,13 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
 - Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
+- PRICE ROUNDING (user decision 2026-11-22): final GameBoost price >= 150 is rounded UP to the next multiple of 5
+  (1223.22 -> 1225, 324 -> 325, 556 -> 560); under 150 unchanged (`lib/auto/pricing.ts`). Applied in prepare, in review edits
+  and authoritatively on the server at publish (it then sends the rounded number; sheet NOTE "price rounded A → B (input x2)").
+  The review shows a "rounded ↑ from A" badge.
+- AI limit toasts: on a 429 the AI client tells a DAILY quota (TPD/RPD, "per day") from a per-minute limit and reads Groq's
+  "try again in 7m12s"; /api/ai/prepare returns every model's shared state; /auto shows one toast per model that ran out and a
+  red one when ALL are out (`lib/auto/aiNotices.ts`, once per day per browser tab).
 - Credentials (manual delivery message the buyer receives) = an editable template on /auto, default
   "thank you for your purchase\n\ndelivery takes anywhere from 5 min up to [delivery time] ❤️"; `[delivery time]` is filled on the
   server from the delivery setting ("1 hour", "2 days"); max 500 chars (`lib/auto/credentials.ts`).
