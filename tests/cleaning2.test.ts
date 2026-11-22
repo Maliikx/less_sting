@@ -190,3 +190,39 @@ test("AI: new Groq model names load; reasoning models get low effort and room to
   const old = loadChain({ AI_PROVIDERS: "groq:llama-3.3-70b-versatile", GROQ_API_KEY: "k" })
   await assert.rejects(new AiClient(old, { fetch: retired }).chatJson("s", "u"), /not available any more \(retired or renamed\) - update AI_PROVIDERS/)
 })
+
+/* ------------------------------------------------------------ live 422: server invalid, is_ranked_ready must be true/false */
+
+test("yes/no field names (is_/has_/can_) are true/false, never 'Unknown'; GameBoost's 422 types are remembered per game", async () => {
+  const { normalizeSpecs, lowestValue, applyLearnedTypes } = await import("../lib/gameFields")
+  const { rememberLearnedTypes, readCachedSpecs, writeCachedSpecs } = await import("../lib/auto/gameProfileCache")
+  const { MemoryStateStore } = await import("../lib/state/store")
+  const specs = normalizeSpecs([
+    { key: "is_ranked_ready", type: "string", required: true },
+    { key: "has_skins", type: "string", required: false },
+    { key: "server", type: "string", required: true },
+    { key: "is_region", type: "enum", required: true, options: ["EU", "NA"] }, // has options: not touched
+  ])
+  assert.deepEqual(specs.map(s => [s.key, s.type]), [["is_ranked_ready", "boolean"], ["has_skins", "boolean"], ["server", "string"], ["is_region", "enum"]])
+  assert.equal(lowestValue(specs[0]), false, "default false, not 'Unknown'")
+  assert.deepEqual(fieldsFromParams(specs, { "Ranked ready": "Yes" }), { is_ranked_ready: true })
+
+  const learned = applyLearnedTypes([{ key: "wins", type: "string", required: true }], { wins: "integer" })
+  assert.equal(learned.changed, true)
+  assert.equal(learned.specs[0].type, "integer")
+
+  const store = new MemoryStateStore()
+  await writeCachedSpecs(store, 42, [{ key: "ranked_ready", type: "string", required: true }])
+  assert.equal(await rememberLearnedTypes(store, 42, { ranked_ready: "boolean" }), true)
+  assert.equal((await readCachedSpecs(store, 42))![0].type, "boolean", "the next batch for this game sends true/false")
+})
+
+test("publish: learned types from POST /api/offers are handed to the game cache", async () => {
+  const { gameboostDestination } = await import("../lib/destinations/gameboost")
+  const seen: unknown[] = []
+  const dest = gameboostDestination(async () => ({ status: 200, json: { failed: [{ title: "t", error: "x" }], learnedTypes: { is_ranked_ready: "boolean" } } }), {
+    onLearnedTypes: async (game, types) => void seen.push([game.id, types]),
+  })
+  await dest.publish([{ ref: "r", link: "https://funpay.com/en/lots/offer?id=123", seller: "M", title: "t", description: "d", images: ["https://x/y.jpg"], priceInput: "10", accountData: {}, defaulted: [], game: { id: 5, slug: "lol", name: "LoL" } }], { listNow: false, deliveryDuration: 1, deliveryUnit: "hours" })
+  assert.deepEqual(seen, [[5, { is_ranked_ready: "boolean" }]])
+})

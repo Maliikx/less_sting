@@ -109,6 +109,8 @@ export type GameBoostDestinationOptions = {
   findExisting?: (item: PublishItem) => Promise<ExistingOffer | null>
   /** Append sheet rows for offers found on GameBoost (never edits existing rows). */
   logExisting?: (found: { item: PublishItem; offer: ExistingOffer }[]) => Promise<void>
+  /** GameBoost told us field types in a 422 ("must be true or false"): remember them for this game. */
+  onLearnedTypes?: (game: PublishItem["game"], types: Record<string, string>) => Promise<void>
 }
 
 /**
@@ -169,6 +171,8 @@ export function gameboostDestination(callOffersApi: OffersApiCall, opts: GameBoo
           continue
         }
         out.push(...mapAnswer(group, res.status, res.json as Answer))
+        const learned = res.json.learnedTypes as Record<string, string> | undefined
+        if (learned && Object.keys(learned).length) await opts.onLearnedTypes?.(group[0].game, learned).catch(() => {})
       }
       const order = new Map(items.map((it, i) => [it.ref, i]))
       return out.sort((a, b) => (order.get(a.ref) ?? 0) - (order.get(b.ref) ?? 0))

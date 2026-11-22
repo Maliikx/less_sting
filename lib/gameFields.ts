@@ -59,7 +59,12 @@ export function specsFromTemplate(
 export function normalizeSpecs(specs: FieldSpec[]): FieldSpec[] {
   const ITEM = /^(.+?)\.(?:\*|\d+)$/
   const byKey = new Map<string, FieldSpec>()
-  for (const s of specs) if (!ITEM.test(s.key)) byKey.set(s.key, { ...s })
+  for (const s of specs) {
+    if (ITEM.test(s.key)) continue
+    // "is_ranked_ready", "has_email": a yes/no question. GameBoost wants true/false, never text like "Unknown".
+    const yesNo = s.type === "string" && !s.options?.length && BOOLEAN_NAME.test(s.key)
+    byKey.set(s.key, yesNo ? { ...s, type: "boolean" } : { ...s })
+  }
   for (const s of specs) {
     const m = s.key.match(ITEM)
     if (!m) continue
@@ -72,6 +77,24 @@ export function normalizeSpecs(specs: FieldSpec[]): FieldSpec[] {
     })
   }
   return [...byKey.values()]
+}
+
+/** Field names that ask a yes/no question. */
+export const BOOLEAN_NAME = /^(?:is|has|have|can|was|were|allow|allows|with|without)_/i
+
+/**
+ * Types GameBoost told us in a 422 ("must be true or false", "must be an integer"): apply them to the game's specs so the
+ * next batch sends the right type. Options are kept; a field that became boolean loses text options it can't have.
+ */
+export function applyLearnedTypes(specs: FieldSpec[], types: Record<string, string>): { specs: FieldSpec[]; changed: boolean } {
+  let changed = false
+  const out = specs.map(s => {
+    const t = types[s.key]
+    if (!t || t === s.type || !["integer", "number", "boolean", "array", "string"].includes(t)) return s
+    changed = true
+    return { ...s, type: t as FieldSpec["type"], ...(t === "boolean" || t === "integer" || t === "number" ? { options: undefined } : {}) }
+  })
+  return { specs: out, changed }
 }
 
 function inferType(example: unknown): FieldType {

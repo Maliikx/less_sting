@@ -77,17 +77,17 @@ const ROWS: ResultRow[] = [
 ]
 
 test("buttons: Select all ready / Select created / header 'select all' pick exactly the right rows", () => {
-  assert.deepEqual([...selectReady(ROWS)], ["r1"])
+  assert.deepEqual([...selectReady(ROWS)], ["r1", "f8"], "a failed publish can be fixed and published again")
   assert.deepEqual([...selectCreated(ROWS)], ["c5", "c6"])
-  assert.deepEqual([...selectAll(ROWS)], ["r1", "c5", "c6"])
-  assert.deepEqual(ROWS.filter(isSelectable).map(r => r.key), ["r1", "c5", "c6"])
+  assert.deepEqual([...selectAll(ROWS)], ["r1", "c5", "c6", "f8"])
+  assert.deepEqual(ROWS.filter(isSelectable).map(r => r.key), ["r1", "c5", "c6", "f8"])
   assert.equal(canPublishRow(row("x", { result: { ref: "x", status: "created", offerId: 1, offerStatus: "draft" } })), false, "already published")
 })
 
 test("buttons: Publish / List now / Back to draft / Delete each act only on rows they fit", () => {
   const all = new Set(ROWS.map(r => r.key))
   const t = actionTargets(ROWS, all)
-  assert.deepEqual(t.publish.map(r => r.key), ["r1"])
+  assert.deepEqual(t.publish.map(r => r.key), ["r1", "f8"])
   assert.deepEqual(t.listNow.map(r => r.key), ["c5"])
   assert.deepEqual(t.unlist.map(r => r.key), ["c6"])
   assert.deepEqual(t.remove.map(r => r.key), ["c5", "c6"], "deleted rows are not deleted twice")
@@ -100,4 +100,20 @@ test("buttons: Publish / List now / Back to draft / Delete each act only on rows
 test("buttons: after publishing or deleting, the selection drops rows that can no longer be acted on", () => {
   const sel = new Set(["r1", "c5", "c7", "r2"])
   assert.deepEqual([...pruneSelection(ROWS, sel)], ["r1", "c5"])
+})
+
+test("failed publish: GameBoost's complaints are read per field; typed values keep the field's type", async () => {
+  const { badFieldsOf, parseFieldInput } = await import("../lib/auto/rows")
+  const failed = row("f9", {
+    result: { ref: "f9", status: "failed", error: "The selected account data.server is invalid. (and 1 more error) | account_data.server: ... | request_id 51ee | check: server, is_ranked_ready" },
+  })
+  assert.deepEqual(badFieldsOf(failed), ["server", "is_ranked_ready"])
+  assert.deepEqual(badFieldsOf(row("x", { result: { ref: "x", status: "failed", error: "422 | missing: rank" } })), ["rank"])
+  assert.deepEqual(badFieldsOf(row("y")), [])
+  assert.equal(parseFieldInput("true", false), true)
+  assert.equal(parseFieldInput("no", true), false)
+  assert.equal(parseFieldInput("42", 0), 42)
+  assert.equal(parseFieldInput("abc", 7), 7, "not a number: keep the old value")
+  assert.deepEqual(parseFieldInput("PC, PlayStation", ["PC"]), ["PC", "PlayStation"])
+  assert.equal(parseFieldInput(" EUW ", "Europe"), "EUW")
 })

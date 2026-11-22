@@ -4,6 +4,8 @@ import { POST as offersPost } from "@/app/api/offers/route"
 import { gameboostDestination, sameTitle, sheetRowForExisting } from "@/lib/destinations/gameboost"
 import { parsePublishRequest } from "@/lib/auto/publishRequest"
 import { listOffers } from "@/lib/gameboost"
+import { getStateStore } from "@/lib/state"
+import { rememberLearnedTypes } from "@/lib/auto/gameProfileCache"
 import { COL, ensureGameBoostHeaders, normalize, nowStamp, readRows, writeRowsAt } from "@/lib/sheets"
 
 export const runtime = "nodejs"
@@ -44,6 +46,10 @@ export async function POST(req: Request) {
         const page = await listOffers({ search: item.title.slice(0, 120), perPage: 20 })
         const hit = (page.data || []).find(o => sameTitle(o.title, item.title) && o.status !== "archived")
         return hit ? { id: hit.id, status: hit.status, externalId: hit.external_id, price: hit.price } : null
+      },
+      onLearnedTypes: async (game, types) => {
+        const changed = await rememberLearnedTypes(getStateStore(), game.id, types)
+        if (changed) console.log(`auto publish: learned field types for ${game.name}: ${Object.entries(types).map(([k, v]) => `${k}=${v}`).join(", ")}`)
       },
       logExisting: async found => {
         await ensureGameBoostHeaders()

@@ -128,6 +128,11 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   field and `shapeAccountData` never sends "x.*" keys and always sends lists as lists (live 422 "linkable_platforms.0 is invalid").
   Cached game specs use key `gameprofile:v2:<id>`.
 - FunPay categories can be "Accounts for Fortnite" as well as "PUBG Mobile Accounts" (both -> game name).
+- Yes/no field names (is_/has_/can_/with_...) without options are BOOLEAN (default false, never "Unknown"); types GameBoost reports
+  in a 422 ("must be true or false") are written back to the cached game specs (`lib/auto/gameProfileCache.ts`). A row whose
+  publish FAILED can be edited (game details are editable; refused fields highlighted) and published again (live 422 2026-11-22:
+  "server is invalid", "is_ranked_ready must be true or false"). Allowed values a template doesn't list (e.g. server names) can't
+  be known in advance: the employee types GameBoost's value once the 422 names the field.
 - FunPay params -> GameBoost fields without AI (`fieldsFromParams`): labels match by subject words ("Email linking" ~
   email_not_linked), negative field names flip yes/no ("Email linked" -> email_not_linked = No), "Any platform" -> all options of a
   multi-choice field or an any/all/cross option; never a guess when two labels match. Checked on real offer 69446008 (Genshin).
