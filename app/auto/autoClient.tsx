@@ -1,12 +1,14 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import NavBar from "../navBar"
+import ProgressToast, { NoticeToast, ProgressToastStack } from "@/components/progressToast"
+import { aiLimitNotices, type AiUsageLite, type Notice } from "@/lib/auto/aiNotices"
 import { EMPLOYEES } from "@/lib/employees"
 import { revalidate, toPublishItem, type ReviewRow } from "@/lib/auto/review"
 import {
@@ -118,6 +120,32 @@ export default function AutoClient() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [notices, setNotices] = useState<Notice[]>([])
+  // Keys of notifications already shown (a ref, so every chunk of one prepare run sees the latest set)
+  const seenNotices = useRef<Set<string> | null>(null)
+  const seen = () => {
+    if (!seenNotices.current) {
+      try {
+        seenNotices.current = new Set(JSON.parse(sessionStorage.getItem("ls-ai-notices") || "[]"))
+      } catch {
+        seenNotices.current = new Set()
+      }
+    }
+    return seenNotices.current
+  }
+  /** New AI-limit notifications from a prepare answer (each shown once per day and browser tab). */
+  const onAiUsage = (usage: AiUsageLite[] | undefined) => {
+    if (!usage?.length) return
+    const fresh = aiLimitNotices(usage, seen(), new Date().toISOString().slice(0, 10))
+    if (!fresh.length) return
+    fresh.forEach(n => seen().add(n.key))
+    try {
+      sessionStorage.setItem("ls-ai-notices", JSON.stringify([...seen()]))
+    } catch {
+      /* ignore */
+    }
+    setNotices(prev => [...prev, ...fresh])
+  }
 
   /* ---- settings (incl. the seller), remembered per browser ---- */
   useEffect(() => {
@@ -169,11 +197,12 @@ export default function AutoClient() {
       for (let i = 0; i < lines.length; i += CHUNK) {
         if (i > 0) await sleep(GAP_MS)
         const chunk = lines.slice(i, i + CHUNK)
-        const data = await postJson<{ results: ReviewRow[] }>("/api/ai/prepare", {
+        const data = await postJson<{ results: ReviewRow[]; aiUsage?: AiUsageLite[] }>("/api/ai/prepare", {
           items: chunk.map(({ link, price, seller }) => ({ link, price, seller })),
           picks,
           defaultDescription: settings.defaultDescription || undefined,
         })
+        onAiUsage(data.aiUsage)
         const fresh: ResultRow[] = data.results.map((r, j) => ({ ...r, key: chunk[j].key }))
         updateRows(prev => {
           const map = new Map(prev.map(r => [r.key, r]))
@@ -398,11 +427,13 @@ export default function AutoClient() {
             </div>
           </div>
 
-          {busy && (
-            <div>
-              <div className="h-2 w-full rounded bg-neutral-600"><div className="h-2 rounded bg-green-500 transition-all" style={{ width: `${(100 * busy.done) / Math.max(1, busy.total)}%` }} /></div>
-              <p className="mt-1 text-xs text-neutral-300">{busy.what}… {busy.done} / {busy.total}</p>
-            </div>
+          {(busy || notices.length > 0) && (
+            <ProgressToastStack>
+              {notices.map(n => (
+                <NoticeToast key={n.key} tone={n.tone} title={n.title} body={n.body} onClose={() => setNotices(prev => prev.filter(x => x.key !== n.key))} />
+              ))}
+              {busy && <ProgressToast label={busy.what} done={busy.done} total={busy.total} color={busy.what === "Deleting" ? "bg-red-500" : busy.what === "Publishing" ? "bg-sky-500" : "bg-green-500"} />}
+            </ProgressToastStack>
           )}
           {error && <p className="rounded bg-red-950/60 p-2 text-sm text-red-200">{error}</p>}
           {notice && <p className="rounded bg-sky-950/60 p-2 text-sm text-sky-200">{notice}</p>}
@@ -525,6 +556,9 @@ export default function AutoClient() {
                             </td>
                             <td className="whitespace-nowrap p-1.5">
                               {r.priceEur !== undefined ? <b>{r.priceEur.toFixed(2)}</b> : "—"}
+                              {r.priceBeforeRounding !== undefined && (
+                                <div><span className="rounded bg-violet-700 px-1 font-semibold" title={`Rounded up from ${r.priceBeforeRounding.toFixed(2)} (prices from 150 round up to the next 5)`}>rounded ↑</span> <span className="text-neutral-400">from {r.priceBeforeRounding.toFixed(2)}</span></div>
+                              )}
                               <div className="text-neutral-500">{r.priceInput}{r.priceText ? ` of ${r.priceText}` : ""}</div>
                             </td>
                             <td className="p-1.5">
@@ -588,7 +622,14 @@ function Details({ row, onEdit, locked }: { row: ResultRow; onEdit: (p: Partial<
           <label className="block"><span className="text-neutral-400">Price (number or x2)</span>
             <input className={field} value={row.priceInput} disabled={locked} onChange={e => onEdit({ priceInput: e.target.value })} />
           </label>
-          <div><span className="text-neutral-400">FunPay price (USD, what a buyer pays)</span><div className="py-1">{row.priceText || "not found"}</div></div>
+          <div>
+            <span className="text-neutral-400">FunPay price (USD, what a buyer pays)</span><div className="py-1">{row.priceText || "not found"}</div>
+            <span className="text-neutral-400">GameBoost price</span>
+            <div className="py-1 font-semibold">
+              {row.priceEur !== undefined ? row.priceEur.toFixed(2) : "—"}
+              {row.priceBeforeRounding !== undefined && <span className="ml-1 font-normal text-violet-300">(rounded up from {row.priceBeforeRounding.toFixed(2)}; prices from 150 round up to the next 5)</span>}
+            </div>
+          </div>
         </div>
         <label className="block"><span className="text-neutral-400">Image links (one per line; imgur is not accepted)</span>
           <textarea className={`${field} font-mono`} rows={3} value={row.images.join("\n")} disabled={locked} onChange={e => onEdit({ images: e.target.value.split(/\s+/).map(s => s.trim()).filter(Boolean), defaultImage: false })} />

@@ -88,11 +88,21 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   re-check), `POST /api/auto/publish` -> `lib/destinations` (DestinationAdapter; GameBoost adapter calls the EXISTING
   `POST /api/offers` handler in-process, one request per seller+game). Server re-checks images + banned words before publishing.
 - TESTING PHASE: the page defaults to "Create as draft"; the user can switch to "List immediately" (server only lists on a literal
-  `listNow: true`). The user does not want `main`/production changed yet: test on PR previews; previews should use a COPY of the sheet (Preview-only
+  `listNow: true`). Steps 0-4 were merged to `main` and are LIVE on less-sting.vercel.app (2026-11-21). New work: a branch + PR,
+  tested on its Vercel preview, merged only when the user says so. Previews should use a COPY of the sheet (Preview-only
   `GOOGLE_SHEET_ID`) so test publishes don't land in the real Sheet1.
+- Long actions (prepare/publish on /auto, /probe, the /manage link check and bulk actions) show a floating progress toast
+  (`components/progressToast.tsx`, bottom-right, visible while scrolling).
 - Game: FunPay category -> GameBoost game by exact unique name, else the user picks once per category; remembered in `LS_STATE`
   (`gamemap:funpay:<categoryId>`). Rental offers ("Offer type: Rent"/"Аренда") are flagged and cannot be published.
 - Sheet NOTE for auto rows: `auto · defaulted: <fields> · album images`.
+- PRICE ROUNDING (user decision 2026-11-22): final GameBoost price >= 150 is rounded UP to the next multiple of 5
+  (1223.22 -> 1225, 324 -> 325, 556 -> 560); under 150 unchanged (`lib/auto/pricing.ts`). Applied in prepare, in review edits
+  and authoritatively on the server at publish (it then sends the rounded number; sheet NOTE "price rounded A → B (input x2)").
+  The review shows a "rounded ↑ from A" badge.
+- AI limit toasts: on a 429 the AI client tells a DAILY quota (TPD/RPD, "per day") from a per-minute limit and reads Groq's
+  "try again in 7m12s"; /api/ai/prepare returns every model's shared state; /auto shows one toast per model that ran out and a
+  red one when ALL are out (`lib/auto/aiNotices.ts`, once per day per browser tab).
 - Credentials (manual delivery message the buyer receives) = an editable template on /auto, default
   "thank you for your purchase\n\ndelivery takes anywhere from 5 min up to [delivery time] ❤️"; `[delivery time]` is filled on the
   server from the delivery setting ("1 hour", "2 days"); max 500 chars (`lib/auto/credentials.ts`).
@@ -110,11 +120,22 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
 - AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
   seller talk (I/me/my/we/our). Its prompt lists what to remove and keeps account facts from removed sentences.
+- Titles: emoji runs (✅ 🔥) and 【】/[] also separate parts, so "INSTANT DELIVERY" / "【WARRANTY】" are cut as whole parts; banned
+  phrases match longest-first; leftover empty/unmatched brackets and repeated emoji are tidied. Descriptions: sentences where the
+  shop speaks as "we/our" ("seller talk") and shop marketing ("here you will find", "great prices", "how does the deal work"...)
+  are dropped; lines left without letters ("1.") are dropped. Checked on real Fortnite offer 82035328 (almost all marketing).
+- GameBoost list fields: a template can describe "x" and "x.*" (item with options); `normalizeSpecs` merges them into ONE array
+  field and `shapeAccountData` never sends "x.*" keys and always sends lists as lists (live 422 "linkable_platforms.0 is invalid").
+  Cached game specs use key `gameprofile:v2:<id>`.
+- FunPay categories can be "Accounts for Fortnite" as well as "PUBG Mobile Accounts" (both -> game name).
 - FunPay params -> GameBoost fields without AI (`fieldsFromParams`): labels match by subject words ("Email linking" ~
   email_not_linked), negative field names flip yes/no ("Email linked" -> email_not_linked = No), "Any platform" -> all options of a
   multi-choice field or an any/all/cross option; never a guess when two labels match. Checked on real offer 69446008 (Genshin).
 
 ## AI capacity (2026-11-19 estimate; limits change, check the Groq console)
+- Groq RETIRED llama-3.3-70b-versatile and llama-3.1-8b-instant on 2026-08-16 (live error 2026-11-21: "model does not exist").
+  Use `AI_PROVIDERS=groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b` (Groq's recommended replacements). They are reasoning
+  models: the client sends reasoning_effort "low" and max_tokens >= 2500. The limits below were for the llama models.
 - One AI call ~1,300 tokens on real offers (range ~870-1,800). AI runs only when text is not English (rare: /en/ pages are translated)
   or GameBoost fields are missing from the FunPay params.
 - Groq free (third-party sources, unofficial): llama-3.3-70b ~1,000 req/day, 100k-200k tokens/day, 6k-12k tokens/min;

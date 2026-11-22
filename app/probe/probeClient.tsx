@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import NavBar from "../navBar"
+import ProgressToast, { ProgressToastStack } from "@/components/progressToast"
 import { dedupeLinks, PROBE_GAP_MS, PROBE_MAX_LINKS, summarize, type ProbeRow } from "@/lib/sources/probe"
 
 /** Stop on our own when this many links in a row come back blocked: never push harder against a block. */
@@ -137,16 +138,23 @@ export default function ProbeClient() {
             )}
           </div>
 
-          {progress && (
-            <div>
-              <div className="h-2 w-full rounded bg-neutral-700">
-                <div className="h-2 rounded bg-green-600 transition-all" style={{ width: `${(100 * progress.done) / Math.max(1, progress.total)}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-neutral-400">
-                {progress.done} / {progress.total} links
-                {repeated.length > 0 && ` · ${repeated.length} repeated link(s) skipped`}
-              </p>
-            </div>
+          {progress && running && (
+            <ProgressToastStack>
+              <ProgressToast
+                label="Probing links"
+                done={progress.done}
+                total={progress.total}
+                detail={repeated.length > 0 ? `${repeated.length} repeated link(s) skipped` : undefined}
+                onStop={() => (stopRef.current = true)}
+                stopLabel="Stop after this chunk"
+              />
+            </ProgressToastStack>
+          )}
+          {progress && !running && (
+            <p className="text-xs text-neutral-400">
+              {progress.done} / {progress.total} links
+              {repeated.length > 0 && ` · ${repeated.length} repeated link(s) skipped`}
+            </p>
           )}
 
           {error && <p className="rounded bg-red-900/60 p-2 text-sm">Error: {error}</p>}

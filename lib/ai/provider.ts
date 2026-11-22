@@ -2,7 +2,8 @@
  * One small client for every OpenAI-compatible chat API: Groq, Google Gemini, OpenRouter, a local Ollama.
  * Switching provider = changing AI_PROVIDERS in .env.local, no code change.
  *
- *   AI_PROVIDERS="groq:llama-3.3-70b-versatile,groq:llama-3.1-8b-instant,gemini:gemini-2.5-flash,ollama:qwen2.5:7b"
+ *   AI_PROVIDERS="groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b"
+ *   (Groq retired llama-3.3-70b-versatile and llama-3.1-8b-instant on 2026-08-16; check console.groq.com/docs/models)
  *
  * The list is a FALLBACK CHAIN: the first entry that is not cooling down / out of budget is used.
  * A 429 or 5xx moves on to the next entry, so a free tier running dry never stops the pipeline.
@@ -38,6 +39,9 @@ export function loadChain(env: Record<string, string | undefined> = process.env)
   return out
 }
 
+/** Models that reason before answering (OpenAI gpt-oss, Qwen3, DeepSeek R1...). */
+export const isReasoningModel = (model: string) => /gpt-oss|qwen3|deepseek-r1|(^|\/)o\d|reason/i.test(model)
+
 export type ChatResult = { json: unknown; text: string; used: string; tokens: number }
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{
   ok: boolean
@@ -48,7 +52,27 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 
 export class AiUnavailableError extends Error {}
 
-type State = { cooldownUntil: number; day: string; tokensToday: number }
+/** Why a model is paused: its daily quota is used up, a per-minute limit, our own daily budget, or a server error. */
+export type LimitKind = "daily" | "minute" | "budget" | "error"
+type State = { cooldownUntil: number; day: string; tokensToday: number; limit?: LimitKind }
+
+/** One model's state for the UI (toasts) and reports. */
+export type AiUsage = { entry: string; tokensToday: number; cooldownSeconds: number; limit?: LimitKind }
+
+/**
+ * Read a 429/5xx: is it the DAILY quota (tokens/requests per day) or a short per-minute limit, and when does it lift?
+ * Groq says e.g. "Rate limit reached ... on tokens per day (TPD) ... Please try again in 7m12.5s."
+ */
+export function readLimit(status: number, body: string, retryAfterHeader: string | null): { kind: LimitKind; waitMs?: number } {
+  const b = String(body || "")
+  const kind: LimitKind = status >= 500 ? "error" : /per day|\bTPD\b|\bRPD\b|daily|quota/i.test(b) ? "daily" : "minute"
+  const m = b.match(/try again in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i)
+  let waitMs: number | undefined
+  if (m && (m[1] || m[2] || m[3])) waitMs = ((Number(m[1] || 0) * 60 + Number(m[2] || 0)) * 60 + Number(m[3] || 0)) * 1000
+  const ra = Number(retryAfterHeader)
+  if (!waitMs && Number.isFinite(ra) && ra > 0) waitMs = ra * 1000
+  return { kind, waitMs }
+}
 
 /** Strip ```json fences and take the outermost {...}. */
 export function parseJsonLoose(text: string): unknown {
@@ -95,7 +119,10 @@ export class AiClient {
         const r = remote.get(this.storeKey(e))?.value
         if (!r) continue
         const local = this.st(e)
-        if (r.cooldownUntil > local.cooldownUntil) local.cooldownUntil = r.cooldownUntil
+        if (r.cooldownUntil > local.cooldownUntil) {
+          local.cooldownUntil = r.cooldownUntil
+          local.limit = r.limit
+        }
         if (r.day === local.day && r.tokensToday > local.tokensToday) local.tokensToday = r.tokensToday
       }
     } catch (err) {
@@ -129,15 +156,22 @@ export class AiClient {
   private st(e: ProviderEntry): State {
     let s = this.state.get(this.key(e))
     if (!s || s.day !== this.today()) {
-      s = { cooldownUntil: s?.cooldownUntil ?? 0, day: this.today(), tokensToday: 0 }
+      s = { cooldownUntil: s?.cooldownUntil ?? 0, day: this.today(), tokensToday: 0, limit: s?.limit === "budget" ? undefined : s?.limit }
       this.state.set(this.key(e), s)
     }
     return s
   }
 
   /** For the UI / daily report: what has been used today per chain entry. */
-  usage() {
-    return this.chain.map(e => ({ entry: this.key(e), tokensToday: this.st(e).tokensToday, cooldownSeconds: Math.max(0, Math.ceil((this.st(e).cooldownUntil - this.now()) / 1000)) }))
+  usage(): AiUsage[] {
+    const budget = this.opts.dailyTokenBudget ?? Number(process.env.AI_DAILY_TOKEN_BUDGET || 0)
+    return this.chain.map(e => {
+      const s = this.st(e)
+      const cooldownSeconds = Math.max(0, Math.ceil((s.cooldownUntil - this.now()) / 1000))
+      const overBudget = budget > 0 && s.tokensToday >= budget
+      const limit: LimitKind | undefined = overBudget ? "budget" : cooldownSeconds > 0 ? s.limit : undefined
+      return { entry: this.key(e), tokensToday: s.tokensToday, cooldownSeconds, ...(limit ? { limit } : {}) }
+    })
   }
 
   /** Ask for a JSON object. Tries each chain entry in order; throws AiUnavailableError if all fail. */
@@ -161,7 +195,10 @@ export class AiClient {
             body: JSON.stringify({
               model: e.model,
               temperature: 0,
-              max_tokens: opts.maxTokens ?? 1200,
+              // Reasoning models (gpt-oss, qwen3...) think before answering and that counts against max_tokens:
+              // ask for low effort and leave room, or the JSON answer gets cut off.
+              max_tokens: isReasoningModel(e.model) ? Math.max(opts.maxTokens ?? 1200, 2500) : (opts.maxTokens ?? 1200),
+              ...(isReasoningModel(e.model) && e.provider === "groq" ? { reasoning_effort: "low" } : {}),
               response_format: { type: "json_object" },
               messages: [
                 { role: "system", content: system },
@@ -172,13 +209,20 @@ export class AiClient {
           })
           const body = await res.text()
           if (res.status === 429 || res.status >= 500) {
-            const ra = Number(res.headers.get("retry-after"))
-            s.cooldownUntil = this.now() + (Number.isFinite(ra) && ra > 0 ? ra * 1000 : 60_000)
+            const lim = readLimit(res.status, body, res.headers.get("retry-after"))
+            // daily quota with no hint: wait until the next UTC day (when the day counters restart)
+            const untilTomorrow = Date.UTC(new Date(this.now()).getUTCFullYear(), new Date(this.now()).getUTCMonth(), new Date(this.now()).getUTCDate() + 1) - this.now()
+            s.cooldownUntil = this.now() + (lim.waitMs ?? (lim.kind === "daily" ? untilTomorrow : 60_000))
+            s.limit = lim.kind
             await this.persist(e)
-            errors.push(`${this.key(e)}: HTTP ${res.status}`)
+            errors.push(`${this.key(e)}: ${lim.kind === "daily" ? "out of tokens for today" : lim.kind === "minute" ? "rate limit (per minute)" : `HTTP ${res.status}`}`)
             break // next chain entry
           }
-          if (!res.ok) { errors.push(`${this.key(e)}: HTTP ${res.status} ${body.slice(0, 120)}`); break }
+          if (!res.ok) {
+            const gone = (res.status === 404 || res.status === 400) && /does not exist|decommissioned|deprecated|not found|no access/i.test(body)
+            errors.push(gone ? `${this.key(e)}: this model is not available any more (retired or renamed) - update AI_PROVIDERS in Vercel` : `${this.key(e)}: HTTP ${res.status} ${body.slice(0, 120)}`)
+            break
+          }
           const data = JSON.parse(body) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } }
           const text = data.choices?.[0]?.message?.content ?? ""
           s.tokensToday += data.usage?.total_tokens ?? Math.ceil((system.length + user.length + text.length) / 4)

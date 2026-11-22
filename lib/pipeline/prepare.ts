@@ -6,6 +6,7 @@ import { applyDefaults, isEmptyValue, type Defaulted, type FieldSpec } from "../
 import { descriptionTag, fixTitle, resolvePrice } from "../offerRules"
 import { canonicalIdOf } from "../sources/index"
 import { IMGUR_MESSAGE } from "../auto/messages"
+import { roundPrice, roundingMessage } from "../auto/pricing"
 import type { SourceOffer } from "../sources/types"
 
 /**
@@ -67,7 +68,10 @@ export type PreparedOffer = {
   imgurImages?: boolean
   sourcePrice?: number
   priceText?: string
+  /** Final GameBoost price (after rounding). */
   priceEur?: number
+  /** Set when the price was rounded up (from >= 150 to the next 5): the price before rounding. */
+  priceBeforeRounding?: number
   accountData: Record<string, unknown>
   /** Required fields we could not find: filled with the lowest value. Shown highlighted and logged. */
   defaulted: Defaulted[]
@@ -157,6 +161,26 @@ export function fieldsFromParams(specs: FieldSpec[], params: Record<string, stri
     } else if (s.type === "string") {
       out[s.key] = answer !== null && negativeKey(s.key) ? (answer ? "Yes" : "No") : raw
     }
+  }
+  return out
+}
+
+/**
+ * Last check on the shape GameBoost gets: no item keys ("linkable_platforms.*"), and list fields always as lists
+ * (a single value becomes [value]). Prevents 422s like "account_data.linkable_platforms.0 is invalid".
+ */
+export function shapeAccountData(specs: FieldSpec[], values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(values)) {
+    if (/[.*]/.test(k)) continue
+    const spec = specs.find(s => s.key === k)
+    if (spec?.type === "array" && !Array.isArray(v)) {
+      if (v === undefined || v === null || v === "") continue
+      const item = String(v)
+      const opt = spec.options?.find(o => nrm(o) === nrm(item)) ?? spec.options?.find(o => nrm(item).includes(nrm(o)))
+      if (spec.options?.length && !opt) continue // not an allowed value: leave it out rather than send something invalid
+      out[k] = [opt ?? item]
+    } else out[k] = v
   }
   return out
 }
@@ -318,11 +342,18 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
   /* 7. price */
   const price = resolvePrice(base.priceInput, src.price !== undefined ? String(src.price) : undefined)
   if (price.error) flag("error", "price", price.error)
-  else base.priceEur = price.value
+  else {
+    const r = roundPrice(price.value!)
+    base.priceEur = r.value
+    if (r.rounded) {
+      base.priceBeforeRounding = r.original
+      flag("info", "price_rounded", roundingMessage(r))
+    }
+  }
 
   /* 8. required fields: lowest value, and say so */
   const filled = applyDefaults(specs, fields)
-  base.accountData = filled.values
+  base.accountData = shapeAccountData(specs, filled.values)
   base.defaulted = filled.defaulted
   for (const f of filled.defaulted) flag("warn", "defaulted", `${f.key} = ${JSON.stringify(f.value)} (${f.reason})`)
 

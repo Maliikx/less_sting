@@ -1,5 +1,6 @@
 import { findViolations } from "../cleaning/clean"
-import { descriptionTag, listingProblems } from "../offerRules"
+import { descriptionTag, listingProblems, resolvePrice } from "../offerRules"
+import { roundPrice, roundingNote } from "./pricing"
 import { CREDENTIALS_MAX, DEFAULT_CREDENTIALS_TEMPLATE, renderCredentials } from "./credentials"
 import type { PublishItem, PublishSettings } from "../destinations/types"
 
@@ -54,6 +55,13 @@ export function parsePublishRequest(body: unknown): { error: string } | { items:
     if (problems.length) return { error: `${where} (${str("title").slice(0, 40)}): ${problems.join("; ")}` }
     const left = [...findViolations(str("title")), ...findViolations(str("description"))]
     if (left.length) return { error: `${where} (${str("title").slice(0, 40)}): still contains ${[...new Set(left.map(v => v.text))].join(", ")}` }
+    // Final price: the server resolves it (number or multiplier x source price) and applies the rounding rule.
+    const sourcePrice = typeof it.sourcePrice === "number" ? it.sourcePrice : undefined
+    const resolved = resolvePrice(str("priceInput").trim(), sourcePrice !== undefined ? String(sourcePrice) : undefined)
+    if (resolved.error) return { error: `${where} (${str("title").slice(0, 40)}): ${resolved.error}` }
+    const r = roundPrice(resolved.value!)
+    const notes = Array.isArray(it.notes) ? (it.notes as unknown[]).map(String) : []
+    if (r.rounded) notes.push(roundingNote(r, str("priceInput").trim()))
     items.push({
       ref: str("ref"),
       link: str("link"),
@@ -61,11 +69,12 @@ export function parsePublishRequest(body: unknown): { error: string } | { items:
       title: str("title"),
       description,
       images,
-      priceInput: str("priceInput").trim(),
-      sourcePrice: typeof it.sourcePrice === "number" ? it.sourcePrice : undefined,
+      // rounded -> send the final number (POST /api/offers then uses it as-is); the input is kept in the sheet NOTE
+      priceInput: r.rounded ? String(r.value) : str("priceInput").trim(),
+      sourcePrice,
       accountData: it.accountData && typeof it.accountData === "object" ? (it.accountData as Record<string, unknown>) : {},
       defaulted: Array.isArray(it.defaulted) ? (it.defaulted as unknown[]).map(String) : [],
-      notes: Array.isArray(it.notes) ? (it.notes as unknown[]).map(String) : [],
+      notes,
       game: { id: game.id, slug: String(game.slug), name: String(game.name || game.slug) },
     })
   }

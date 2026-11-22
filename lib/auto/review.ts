@@ -2,6 +2,7 @@ import { findViolations } from "../cleaning/clean"
 import { listingProblems, resolvePrice } from "../offerRules"
 import type { Flag, PreparedOffer } from "../pipeline/prepare"
 import { IMGUR_MESSAGE } from "./messages"
+import { roundPrice, roundingMessage } from "./pricing"
 import type { PublishItem } from "../destinations/types"
 
 /**
@@ -12,7 +13,7 @@ import type { PublishItem } from "../destinations/types"
 
 export type ReviewRow = PreparedOffer
 
-const FIXABLE = new Set(["no_images", "imgur_images", "title", "price", "violation", "description", "game_unknown", "images"])
+const FIXABLE = new Set(["price_rounded", "no_images", "imgur_images", "title", "price", "violation", "description", "game_unknown", "images"])
 
 export function revalidate(row: ReviewRow): ReviewRow {
   if (row.status === "dead" || row.status === "duplicate" || row.status === "blocked" || row.status === "error") return row
@@ -32,6 +33,8 @@ export function revalidate(row: ReviewRow): ReviewRow {
   // An empty description is fine: publishing uses the seller tag "#<seller>-<link end>" (user decision).
   const price = resolvePrice(row.priceInput, row.sourcePrice !== undefined ? String(row.sourcePrice) : undefined)
   if (price.error) add("price", price.error)
+  const rounded = price.value !== undefined ? roundPrice(price.value) : undefined
+  if (rounded?.rounded) flags.push({ level: "info", code: "price_rounded", message: roundingMessage(rounded) })
   const left = [...findViolations(row.title), ...findViolations(row.description)]
   if (left.length) add("violation", `Still contains: ${[...new Set(left.map(v => v.text))].join(", ")}`)
   if (!row.game) add("game_unknown", `Pick the GameBoost game for "${row.category || "this category"}"`)
@@ -39,7 +42,8 @@ export function revalidate(row: ReviewRow): ReviewRow {
   return {
     ...row,
     flags,
-    priceEur: price.value,
+    priceEur: rounded?.value,
+    priceBeforeRounding: rounded?.rounded ? rounded.original : undefined,
     status: flags.some(f => f.level === "error") ? "needs_review" : "ready",
   }
 }

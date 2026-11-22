@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import NavBar from "../navBar"
+import ProgressToast, { ProgressToastStack } from "@/components/progressToast"
 import { listingProblems, parseImageUrls } from "@/lib/offerRules"
 
 type Offer = {
@@ -292,10 +293,20 @@ export default function ManageOffers() {
             </div>
 
             {checkStats && <p className="text-xs text-neutral-300">{checkStats}</p>}
-            {check.running && check.total > 0 && (
-              <div className="h-2 w-full bg-neutral-800 rounded overflow-hidden">
-                <div className="h-full bg-orange-500 transition-all" style={{ width: `${Math.round((check.checked / check.total) * 100)}%` }} />
-              </div>
+            {(check.running || bulk?.running) && (
+              <ProgressToastStack>
+                {check.running && (
+                  <ProgressToast
+                    label="Checking offer links"
+                    done={check.checked}
+                    total={check.total}
+                    color="bg-orange-500"
+                    detail={`${check.dead.length} not found${check.unchecked.length ? ` · ${check.unchecked.length} couldn't be opened` : ""}`}
+                    onStop={() => { stopCheck.current = true }}
+                  />
+                )}
+                {bulk?.running && <ProgressToast label="Working on selected offers" done={bulk.done} total={bulk.total} color="bg-sky-500" />}
+              </ProgressToastStack>
             )}
             {(check.running || check.done) && (
               <p className="text-sm">

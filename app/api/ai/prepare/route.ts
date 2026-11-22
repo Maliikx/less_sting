@@ -5,7 +5,7 @@ import { readSourceOffer } from "@/lib/sources"
 import { titleKey } from "@/lib/text"
 import { getDefaultImageStore } from "@/lib/auto/defaultImagesServer"
 import type { GameProfile } from "@/lib/pipeline/prepare"
-import type { FieldSpec } from "@/lib/gameFields"
+import { normalizeSpecs, type FieldSpec } from "@/lib/gameFields"
 import { loadGameProfile } from "@/lib/gameProfile"
 import { listGames } from "@/lib/gameboost"
 import { COL, readRows, sheetErrorMessage } from "@/lib/sheets"
@@ -59,12 +59,13 @@ const PROFILE_TTL_MS = 24 * 3600_000
  */
 async function profileFor(g: GameRef): Promise<GameProfile> {
   const store = getStateStore()
-  const key = `gameprofile:${g.id}`
+  const key = `gameprofile:v2:${g.id}` // v2: list fields merged (normalizeSpecs); old cached shapes are ignored
   const hit = await store.get<FieldSpec[]>(key).catch(() => null)
-  if (hit && Array.isArray(hit.value)) return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: hit.value }
+  if (hit && Array.isArray(hit.value)) return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: normalizeSpecs(hit.value) }
   const p = await loadGameProfile({ gameId: g.id, gameSlug: g.slug, gameName: g.name })
-  await store.set(key, p.specs, { ttlMs: PROFILE_TTL_MS }).catch(() => {})
-  return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs: p.specs }
+  const specs = normalizeSpecs(p.specs)
+  await store.set(key, specs, { ttlMs: PROFILE_TTL_MS }).catch(() => {})
+  return { gameId: g.id, gameSlug: g.slug, gameName: g.name, specs }
 }
 
 export async function POST(req: Request) {
@@ -128,5 +129,6 @@ export async function POST(req: Request) {
       defaultImageFor: gameId => defaults.get(gameId)?.url ?? null,
     }
   )
-  return NextResponse.json({ results, aiUsage: ai.usage() })
+  // Every model's state as all instances see it (for the "AI model out of tokens" toasts on /auto)
+  return NextResponse.json({ results, aiUsage: await ai.sharedUsage() })
 }
