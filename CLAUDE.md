@@ -65,7 +65,8 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
 ## Batch listing UI (plan step 4, decided with the user)
-- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered);
+- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered),
+  with "Offers submitted today: N" under it (same /api/offers/count as the / tab; refreshed on seller change and after publish);
   each row has only offer link + price (number or multiplier). Plus price for all, +10 rows, "paste many links" (`link [price]`).
   Settings next to the publish buttons (remembered per browser): delivery time + unit, default description, delivery instructions,
   "Create as draft" / "List immediately". The page shows 4 steps (offers, prepare = read + clean, review, publish).
@@ -119,7 +120,11 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   (hello/welcome/my shop/thank you for choosing...) is dropped whole; FAQ blocks (heading -> blank line) and Q:/A: lines are dropped;
   any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
 - AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
-  seller talk (I/me/my/we/our). Its prompt lists what to remove and keeps account facts from removed sentences.
+  seller talk (I/me/my/we/our). PRIMARY RULE (user, 2026-11-23; generic for ANY game, not one game's vocabulary): keep every game
+  detail word for word (every in-game name, numbers, lists...), remove only seller /
+  shop / policy / delivery talk. For ENGLISH offers the AI may only DELETE whole sentences it lists in ad_sentences, and only if
+  they really appear in the text (`removeSentences`); its own title/description wording is never used (live report 82636788:
+  it replaced "2 Mythics, 2 Helics" with a summary from the params). Only non-English text uses the AI's translation.
 - Titles: emoji runs (✅ 🔥) and 【】/[] also separate parts, so "INSTANT DELIVERY" / "【WARRANTY】" are cut as whole parts; banned
   phrases match longest-first; leftover empty/unmatched brackets and repeated emoji are tidied. Descriptions: sentences where the
   shop speaks as "we/our" ("seller talk") and shop marketing ("here you will find", "great prices", "how does the deal work"...)
