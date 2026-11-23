@@ -265,6 +265,8 @@ test("AI: English text -> only the listed sentences are deleted; nothing is rewr
 })
 
 test("AI prompt: keep game details word for word, never rewrite or summarize", () => {
-  for (const s of ["keep every game detail EXACTLY", "Never rewrite, summarize, shorten", "champion/hero/skin/item names", "copied EXACTLY as it appears"]) assert.ok(SYSTEM_PROMPT.includes(s), s)
+  for (const s of ["(any game)", "keep every game detail EXACTLY", "every in-game name, whatever the game calls it", "Never rewrite, summarize, shorten", "copied EXACTLY as it appears"]) assert.ok(SYSTEM_PROMPT.includes(s), s)
+  // examples from many games, not one game's vocabulary
+  for (const w of ["characters", "agents", "operators", "legends", "skins", "weapons", "vehicles", "in-game currency"]) assert.ok(SYSTEM_PROMPT.includes(w), w)
   assert.ok(!SYSTEM_PROMPT.includes("rewrite it as a short factual sentence"), "the old paraphrasing instruction is gone")
 })

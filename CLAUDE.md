@@ -119,7 +119,8 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
   (hello/welcome/my shop/thank you for choosing...) is dropped whole; FAQ blocks (heading -> blank line) and Q:/A: lines are dropped;
   any sentence naming the FunPay seller (`sellerName`, read from the offer page) is dropped.
 - AI runs when the text is not English, when GameBoost fields are still missing, OR when the description still has first-person
-  seller talk (I/me/my/we/our). PRIMARY RULE (user, 2026-11-23): keep every game detail word for word, remove only seller /
+  seller talk (I/me/my/we/our). PRIMARY RULE (user, 2026-11-23; generic for ANY game, not one game's vocabulary): keep every game
+  detail word for word (every in-game name, numbers, lists...), remove only seller /
   shop / policy / delivery talk. For ENGLISH offers the AI may only DELETE whole sentences it lists in ad_sentences, and only if
   they really appear in the text (`removeSentences`); its own title/description wording is never used (live report 82636788:
   it replaced "2 Mythics, 2 Helics" with a summary from the params). Only non-English text uses the AI's translation.
