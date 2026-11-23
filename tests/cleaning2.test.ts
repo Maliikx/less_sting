@@ -226,3 +226,45 @@ test("publish: learned types from POST /api/offers are handed to the game cache"
   await dest.publish([{ ref: "r", link: "https://funpay.com/en/lots/offer?id=123", seller: "M", title: "t", description: "d", images: ["https://x/y.jpg"], priceInput: "10", accountData: {}, defaulted: [], game: { id: 5, slug: "lol", name: "LoL" } }], { listNow: false, deliveryDuration: 1, deliveryUnit: "hours" })
   assert.deepEqual(seen, [[5, { is_ranked_ready: "boolean" }]])
 })
+
+/* ------------------------------------------------------------ live report 82636788 (Raid): the AI rewrote the offer */
+
+test("real offer 82636788 (Raid): the AI cannot rewrite an English offer; champion names and the seller's wording stay", async () => {
+  const src = real("82636788") // title "2 Mythics, 2 Helics"; "There is room for further development. Please message me before purchasing."
+  const calls = { n: 0, prompts: [] as string[] }
+  // what the model actually returned live: its own summary instead of the seller's text
+  const ai = fakeAi({
+    title: "2 Mythic Champions, 13 Legendary Champions, Level 50",
+    description: "Account level 50. Contains 2 Mythic champions and 13 Legendary champions.",
+    ad_sentences: ["Please message me before purchasing.", "A sentence that is not in the text."],
+    fields: { account_level: { value: 50, evidence: "Account level 50" } },
+  }, calls)
+  const specs: FieldSpec[] = [{ key: "account_level", type: "integer", required: true }, { key: "platform", type: "enum", required: true, options: ["PC", "Mobile"] }]
+  const r = await prepareOffer({ link: "https://funpay.com/en/lots/offer?id=82636788", price: "x1.85", seller: "V" }, { readOffer: async () => src, ai, game: { specs } })
+  assert.equal(calls.n, 1, "the AI was asked (platform missing)")
+  assert.equal(r.title, "2 Mythics, 2 Helics", "the seller's title, with the champion name, is kept")
+  assert.equal(r.description, "There is room for further development.")
+  assert.ok(!r.removed.some(x => /not in the text/.test(x.text)), "a sentence that isn't in the text removes nothing")
+  assert.equal(r.accountData.account_level, 50)
+})
+
+test("AI: English text -> only the listed sentences are deleted; nothing is rewritten. Non-English -> the translation is used", async () => {
+  const { removeSentences } = await import("../lib/pipeline/prepare")
+  const text = "Mythic: Helicath, Siphi.\nLegendaries: Arbiter, Duchess Lilitu.\nWrite me before   buying, I answer fast!"
+  const r = removeSentences(text, ["write me before buying, I answer fast!"])
+  assert.equal(r.text, "Mythic: Helicath, Siphi.\nLegendaries: Arbiter, Duchess Lilitu.")
+  assert.deepEqual(r.removed, ["write me before buying, I answer fast!"])
+
+  const ru = { ...real("82636788"), title: "2 мифика, Хеликат", description: "Аккаунт 50 уровня. Пишите перед покупкой." }
+  const calls = { n: 0, prompts: [] as string[] }
+  const ai = fakeAi({ title: "2 Mythics, Helicath", description: "Level 50 account.", ad_sentences: ["Пишите перед покупкой."], fields: {} }, calls)
+  const t = await prepareOffer({ link: "https://funpay.com/en/lots/offer?id=82636788", price: "10", seller: "V" }, { readOffer: async () => ru, ai, game: { specs: [] } })
+  assert.equal(t.language, "translated")
+  assert.equal(t.title, "2 Mythics, Helicath")
+  assert.equal(t.description, "Level 50 account.")
+})
+
+test("AI prompt: keep game details word for word, never rewrite or summarize", () => {
+  for (const s of ["keep every game detail EXACTLY", "Never rewrite, summarize, shorten", "champion/hero/skin/item names", "copied EXACTLY as it appears"]) assert.ok(SYSTEM_PROMPT.includes(s), s)
+  assert.ok(!SYSTEM_PROMPT.includes("rewrite it as a short factual sentence"), "the old paraphrasing instruction is gone")
+})

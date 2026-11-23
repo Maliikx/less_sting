@@ -185,6 +185,26 @@ export function shapeAccountData(specs: FieldSpec[], values: Record<string, unkn
   return out
 }
 
+/**
+ * Remove the sentences the AI pointed at, but only where they really appear in the text (case and spacing ignored).
+ * Nothing else changes, so game details stay exactly as the seller wrote them.
+ */
+export function removeSentences(text: string, sentences: string[]): { text: string; removed: string[] } {
+  let out = text
+  const removed: string[] = []
+  const flex = (s: string) => s.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")
+  for (const s of sentences) {
+    const t = String(s || "").trim()
+    if (t.length < 4) continue
+    const re = new RegExp(flex(t), "i")
+    if (!re.test(out)) continue
+    out = out.replace(re, " ")
+    removed.push(t)
+  }
+  out = out.split("\n").map(l => l.replace(/[ \t]{2,}/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim()
+  return { text: out, removed }
+}
+
 /** First-person seller talk left after the rules ("I ask you to...", "my store", "we deliver"). */
 const SELLER_VOICE = /(?<![\p{L}\p{N}'’])(?:i|i'm|i’m|i am|me|my|mine|we|we're|our)(?![\p{L}\p{N}'’])/iu
 
@@ -297,10 +317,19 @@ export async function prepareOffer(input: PrepareInput, deps: PrepareDeps): Prom
     } else {
       try {
         const out = await aiExtract(deps.ai, { title, description, params: src.params, wanted, translate })
-        title = out.title
-        description = out.description || description
+        if (translate) {
+          // Not English: the AI's translation is used (the prompt forbids summarizing or adding); flagged for a look.
+          title = out.title
+          description = out.description || description
+          base.removed.push(...out.adSentences.map(s => ({ text: s, reason: "seller talk (AI)" })))
+        } else {
+          // English: the AI may only DELETE whole sentences it points at; its own wording is never used (user rule:
+          // keep every game detail word for word, remove only seller / policy / delivery talk).
+          const r = removeSentences(description, out.adSentences)
+          description = r.text
+          base.removed.push(...r.removed.map(s => ({ text: s, reason: "seller talk (AI)" })))
+        }
         Object.assign(fields, out.fields)
-        base.removed.push(...out.adSentences.map(s => ({ text: s, reason: "seller advertising (AI)" })))
         for (const r of out.rejected) flag("info", "ai_rejected", `${r.key}: ${r.reason}`)
         base.aiUsed = true
         base.provider = out.provider
