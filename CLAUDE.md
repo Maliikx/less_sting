@@ -65,7 +65,8 @@ duplicate-title check), signed session cookie, `proxy.ts` auth for all `/api` ro
 - `npm run probe:funpay` works again; `npx tsx scripts/parser-report.ts [dir]` measures the parser on saved pages offline.
 
 ## Batch listing UI (plan step 4, decided with the user)
-- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered);
+- Employees list 10-20 offers at a time, each seller for themselves. `/auto`: the SELLER is chosen ONCE at the top (remembered),
+  with "Offers submitted today: N" under it (same /api/offers/count as the / tab; refreshed on seller change and after publish);
   each row has only offer link + price (number or multiplier). Plus price for all, +10 rows, "paste many links" (`link [price]`).
   Settings next to the publish buttons (remembered per browser): delivery time + unit, default description, delivery instructions,
   "Create as draft" / "List immediately". The page shows 4 steps (offers, prepare = read + clean, review, publish).

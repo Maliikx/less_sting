@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -111,6 +111,19 @@ export default function AutoClient() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
   const [inputs, setInputs] = useState<InputRow[]>(() => Array.from({ length: 5 }, () => newRow()))
   const [bulkPrice, setBulkPrice] = useState("")
+  /** "Offers submitted today" for the chosen seller: same count as the / tab (always re-read from the sheet). */
+  const [today, setToday] = useState<{ loading: boolean; count: number; error?: string } | null>(null)
+  const refreshToday = useCallback(async (seller: string) => {
+    if (!seller) return setToday(null)
+    setToday(t => ({ loading: true, count: t?.count ?? 0 }))
+    try {
+      const res = await fetch(`/api/offers/count?employee=${encodeURIComponent(seller)}`)
+      const data = await res.json().catch(() => ({}))
+      setToday({ loading: false, count: Number(data.count) || 0, error: res.ok ? undefined : data.error || `Could not read the sheet (error ${res.status})` })
+    } catch {
+      setToday({ loading: false, count: 0, error: "Could not reach the server" })
+    }
+  }, [])
   /** Row just added with "Add row": its link box gets the cursor. */
   const [focusRow, setFocusRow] = useState<string | null>(null)
   const [paste, setPaste] = useState("")
@@ -158,6 +171,11 @@ export default function AutoClient() {
       /* storage unavailable */
     }
   }, [])
+  // re-read the seller's count whenever the seller changes (also when the remembered seller loads)
+  useEffect(() => {
+    void refreshToday(settings.seller)
+  }, [settings.seller, refreshToday])
+
   const saveSettings = (patch: Partial<Settings>) => {
     const next = { ...settings, ...patch }
     setSettings(next)
@@ -306,6 +324,7 @@ export default function AutoClient() {
         setBusy({ what: "Publishing", done: Math.min(list.length, i + chunk.length), total: list.length })
       }
       setNotice(`${created} offer(s) ${settings.listNow ? "listed" : "created as drafts"} on GameBoost.`)
+      void refreshToday(settings.seller)
     } catch (e) {
       setError(
         `${e instanceof Error ? e.message : String(e)}. Some offers may already be on GameBoost. It is safe to press Publish again: ` +
@@ -395,6 +414,12 @@ export default function AutoClient() {
               <Button type="button" variant="secondary" onClick={() => setShowPaste(v => !v)}>📋 Paste many links</Button>
             </div>
             {!settings.seller && <p className="text-xs text-yellow-300">Choose your seller code first: every offer in this batch is listed under it.</p>}
+            {settings.seller && today && (
+              <p className="text-base font-medium text-white">
+                {today.loading ? "Checking today's submissions..." : `Offers submitted today: ${today.count}`}
+                {today.error && <span className="ml-2 rounded bg-red-950/40 p-1 text-sm text-red-300">{today.error}</span>}
+              </p>
+            )}
 
             {showPaste && (
               <div className="space-y-2 rounded-lg border border-neutral-600 bg-neutral-900 p-3">
